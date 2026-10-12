@@ -1,0 +1,518 @@
+/* ─────────────────────────────────────────────────────────────
+   Liquid Glass — язык iOS/macOS. Светлое по умолчанию (Control Center).
+   Стекло: белая полупрозрачность + преломление (SVG-фильтр) + фаска.
+   Цвет — системные сигналы Apple; акцент — system blue.
+   ───────────────────────────────────────────────────────────── */
+:root{
+  /* чистый светлый матовый фон (без фото) */
+  --wp-scrim:
+    radial-gradient(80% 50% at 50% -20%, rgba(255,255,255,.95) 0%, transparent 72%),
+    linear-gradient(180deg, #f5f5f7 0%, #eeeef1 100%);
+
+  --glass: rgba(255,255,255,.82);
+  --glass-2: rgba(120,120,128,.075);
+  --glass-hi: rgba(255,255,255,.96);
+  --sheen: rgba(255,255,255,.85);
+  --hair: rgba(60,60,67,.12);
+  --hair-2: rgba(60,60,67,.075);
+  --card:#ffffff; --shadow:0 1px 2px rgba(0,0,0,.025), 0 10px 30px -24px rgba(0,0,0,.22);
+
+  --bevel:
+    0 2px 6px rgba(20,30,60,.06),
+    inset 2px 2px .6px -2px rgba(255,255,255,.95),
+    inset -2px -2px .6px -2px rgba(255,255,255,.75),
+    inset 1px 1px 1px -.5px rgba(255,255,255,.7),
+    inset 0 0 8px 5px rgba(255,255,255,.10),
+    0 14px 44px -16px rgba(30,50,100,.28);
+
+  --hi:#1d1d1f; --lo:#515154; --mute:#86868b;
+  /* системный синий: один акцент вместо конкурирующих градиентов */
+  --acc:#0071e3; --acc-2:#1685f8; --acc-glow:rgba(0,113,227,.20); --on-acc:#fff;
+  --deep:#1a2233;
+  --grn:#1faa53; --amb:#e08600; --red:#ff3b30;
+
+  --r:24px; --blur:24px;
+  /* Системная гарнитура Apple: быстрее внешних шрифтов и спокойнее в цифрах. */
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI",sans-serif;
+  --font-display:var(--font);
+  --font-body:var(--font);
+  --font-ui:var(--font);
+  --mono:"SFMono-Regular",ui-monospace,Menlo,monospace;
+  --card-2:#ffffff;
+  --spring:cubic-bezier(.2,.8,.2,1);
+}
+/* ── Тёмная тема: системный графит macOS, без декоративного визуального шума ── */
+:root[data-theme="dark"]{
+  /* Графитовый фон сохраняет глубину, но не спорит с данными. */
+  --wp-scrim:
+    radial-gradient(90% 60% at 50% -10%, rgba(180,190,210,.06) 0%, transparent 60%),
+    radial-gradient(60% 50% at 84% 0%, rgba(120,132,156,.05) 0%, transparent 55%),
+    linear-gradient(180deg, #16181d 0%, #0d0e11 55%, #0a0b0d 100%);
+  /* Нейтральная фрост-плёнка и тонкая светлая кромка. */
+  --glass: linear-gradient(135deg, rgba(255,255,255,.11), rgba(255,255,255,.04));
+  --glass-2: rgba(255,255,255,.055);
+  --glass-hi: rgba(255,255,255,.24);
+  --sheen: rgba(255,255,255,.15);
+  --hair: rgba(255,255,255,.10);
+  --hair-2: rgba(255,255,255,.055);
+  --card:#1c1c1e; --shadow:0 10px 28px -18px rgba(0,0,0,.75);
+  /* мягкая стеклянная фаска + глубокая тень */
+  --bevel:
+    inset 0 1px 0 rgba(255,255,255,.16),
+    inset 0 0 0 1px rgba(255,255,255,.05),
+    inset 0 0 20px 2px rgba(255,255,255,.04),
+    0 20px 54px -22px rgba(0,0,0,.72);
+  /* контраст приподнят: приглушённый текст читается на navy (WCAG AA) */
+  --hi:#f5f5f7; --lo:#c7c7cc; --mute:#8e8e93;
+  /* Системный синий остаётся единственным акцентом. */
+  --acc:#0a84ff; --acc-2:#409cff; --acc-glow:rgba(10,132,255,.34); --on-acc:#ffffff;
+  --deep:#101216;
+  --grn:#3ecf8e; --amb:#e0b341; --red:#e5484d;
+  /* поверхности бенто-карточек — графит */
+  --card:#1c1c1e; --card-2:#242426;
+}
+
+*{box-sizing:border-box}
+html,body,#root{height:100%; margin:0}
+body{font-family:var(--font); color:var(--hi); background:#f5f5f7; overflow-x:hidden;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility}
+:root[data-theme="dark"] body{background:#000}
+
+/* Системная типографика: крупные заголовки плотнее, интерфейс нейтральный. */
+.display{font-family:var(--font-display); font-weight:700; letter-spacing:-.035em}
+.lg-dock-label,.lg-tab span{font-family:var(--font-display)}
+.lg-root p{font-family:var(--font-body)}
+
+/* обои: чистый матовый фон (без фото — как Linear/Stripe) */
+.lg-wallpaper{position:fixed; inset:0; z-index:-2;
+  background-image:var(--wp-scrim); background-size:cover; background-position:center; background-repeat:no-repeat}
+/* тёмная тема — графитовый кинематографичный фон с глубиной (свет сверху → тьма внизу) */
+:root[data-theme="dark"] .lg-wallpaper{background:
+  radial-gradient(80% 48% at 50% -16%, rgba(255,255,255,.075), transparent 66%),
+  linear-gradient(180deg,#111113 0%,#050506 58%,#000 100%); background-image:none}
+/* светлая тема — мягкий градиент, чтобы frosted-стекло реально читалось */
+:root[data-theme="light"] .lg-wallpaper{background:
+  radial-gradient(78% 46% at 50% -18%, rgba(255,255,255,.96), transparent 70%),
+  linear-gradient(180deg,#f5f5f7 0%,#eeeef1 100%); background-image:none}
+
+/* Бенто-карточки (референс image 1): полупрозрачное стекло navy + блюр + тонкая светлая рамка */
+/* Блюра на карточках НЕТ намеренно. За ними лежит статичный градиент-обои —
+   размывать его нечего, а backdrop-filter на каждой из 10–16 карточек заставлял
+   браузер перерисовывать фон под каждой при любом скролле. Плотность подняли,
+   чтобы вид остался тем же. Блюр оставлен только там, где под ним реально
+   проезжает контент: док, таб-бар, панель ассистента. */
+.glass{position:relative; border-radius:var(--r);
+  background:rgba(28,28,30,.88); border:1px solid rgba(255,255,255,.09);
+  box-shadow:0 1px 0 rgba(255,255,255,.09) inset, 0 14px 40px -30px rgba(0,0,0,.78);
+  padding:24px}
+.glass::before{content:''; position:absolute; inset:0; border-radius:inherit;
+  background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 26%); pointer-events:none; z-index:0}
+.glass>*{position:relative; z-index:1}
+:root[data-theme="light"] .glass{
+  background:rgba(255,255,255,.92); border:1px solid rgba(255,255,255,.94);
+  box-shadow:0 1px 0 rgba(255,255,255,.98) inset, 0 10px 30px -24px rgba(0,0,0,.24)}
+:root[data-theme="light"] .glass::before{background:linear-gradient(180deg,rgba(255,255,255,.16),transparent 24%)}
+
+/* тонкий матовый скролл-бар вместо системного (та самая «полоса», что бесила) */
+*{scrollbar-width:thin; scrollbar-color:var(--hair) transparent}
+*::-webkit-scrollbar{width:8px; height:8px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--hair); border-radius:8px; border:2px solid transparent; background-clip:padding-box}
+*::-webkit-scrollbar-thumb:hover{background:var(--mute)}
+.lg-side nav{overflow-x:hidden}
+
+.eyebrow{font-size:11px; letter-spacing:.065em; text-transform:uppercase; color:var(--mute); font-weight:650;
+  display:flex; justify-content:space-between; gap:10px; align-items:baseline}
+.eyebrow .hint{letter-spacing:0; text-transform:none; color:var(--mute); font-weight:450; font-size:12px}
+.lg-root p{line-height:1.55}
+.tnum{font-variant-numeric:tabular-nums; letter-spacing:-.01em}
+.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid var(--acc); outline-offset:2px; border-radius:10px}
+
+/* ── Элементы дашборда (скопированы с image 2/3) ── */
+.a2-link{display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; letter-spacing:.03em;
+  text-transform:uppercase; color:var(--mute); text-decoration:none; transition:color .18s}
+.a2-link:hover{color:var(--hi)}
+.a2-ava{width:52px; height:52px; border-radius:50%; object-fit:cover; border:1px solid var(--hair); flex:none}
+.a2-avstack{display:flex} .a2-avstack .a2-av{width:30px; height:30px; border-radius:50%; margin-left:-8px;
+  border:2px solid var(--card-2); background:var(--deep); display:grid; place-items:center; font-size:11px; color:var(--lo)}
+.a2-avstack .a2-av:first-child{margin-left:0}
+/* строка прогресса: круглая иконка + текст + звезда-очки */
+.a2-prow{display:flex; align-items:center; gap:12px; padding:9px 0}
+.a2-ic{width:34px; height:34px; border-radius:50%; display:grid; place-items:center; flex:none;
+  background:color-mix(in srgb,var(--acc) 15%,transparent); color:var(--acc)}
+.a2-star{margin-left:auto; display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:700;
+  color:var(--acc)}
+/* легенда категорий (label · count · %) */
+.a2-leg{display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid var(--hair-2); font-size:12.5px}
+.a2-leg .dot{width:9px; height:9px; border-radius:3px; flex:none}
+.a2-leg .c{margin-left:auto; color:var(--mute); font-variant-numeric:tabular-nums}
+.a2-leg .p{width:44px; text-align:right; color:var(--lo); font-variant-numeric:tabular-nums}
+/* круглая кнопка-стрелка */
+.a2-arrow{width:36px; height:36px; border-radius:50%; display:grid; place-items:center; flex:none; cursor:pointer;
+  background:color-mix(in srgb,var(--acc) 90%,#000); color:var(--on-acc); border:0}
+/* тег-облако */
+.a2-tags{position:relative; height:100%; min-height:150px}
+.a2-tag{position:absolute; font-size:11px; font-weight:600; color:var(--lo); white-space:nowrap}
+/* CTA-кнопка premium */
+.a2-cta{display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; cursor:pointer;
+  background:#f4f2ee; color:#161310; border:0; border-radius:16px; padding:14px 18px; font:inherit; font-size:14px; font-weight:600}
+.a2-cta .k{display:inline-flex; gap:5px} .a2-cta .k i{width:8px; height:8px; border-radius:50%; background:#161310}
+/* мини-плеер */
+.a2-play{width:44px; height:44px; border-radius:50%; display:grid; place-items:center; cursor:pointer;
+  background:#f4f2ee; color:#161310; border:0; flex:none}
+.a2-wave{display:flex; align-items:center; gap:2px; height:22px; flex:1}
+.a2-wave i{flex:1; background:var(--hair); border-radius:2px}
+
+/* ── Отчёт недели · тёмная бенто-мозаика, индиго-акцент (референс: image 1) ── */
+.wr{--i:#4f6ef7; --i2:#6b86ff; --ink:#eef1f8; --sub:#93a0c0; --mut:#5f6a88; --num:#6a7597;
+  color:var(--ink); display:flex; gap:16px; align-items:stretch; font-family:var(--font)}
+.wr-col{display:flex; flex-direction:column; gap:16px; min-width:0}
+.wr-card{position:relative; background:#131b2e; border:1px solid rgba(255,255,255,.07);
+  border-radius:24px; padding:24px; overflow:hidden; isolation:isolate}
+.wr-card.big{padding:28px}
+.wr-card.glow::after{content:''; position:absolute; z-index:-1; top:-40%; right:-30%; width:70%; height:120%;
+  background:radial-gradient(closest-side,rgba(79,110,247,.18),transparent 72%); pointer-events:none}
+.wr-eye{font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--mut); font-weight:600}
+.wr-title{font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--i2); line-height:1.05}
+.wr-lead{margin:11px 0 0; font-size:12.5px; line-height:1.55; color:var(--sub); max-width:36ch}
+.wr-big{font-size:52px; font-weight:750; letter-spacing:-.038em; line-height:1; color:var(--num);
+  font-variant-numeric:tabular-nums; display:flex; align-items:baseline; gap:9px}
+.wr-big .u{font-size:20px; font-weight:650; letter-spacing:-.02em; color:var(--mut)}
+.wr-arrow{width:44px; height:44px; border-radius:50%; flex:none; display:grid; place-items:center;
+  background:var(--i); color:#fff; box-shadow:0 10px 26px -8px rgba(79,110,247,.75)}
+.wr-badge{width:44px; height:44px; border-radius:50%; flex:none; display:grid; place-items:center;
+  background:rgba(79,110,247,.14); color:var(--i2); font-size:18px; font-weight:700}
+.wr-deltas{display:flex; align-items:stretch; gap:0; margin-top:22px}
+.wr-delta{flex:1; padding:0 18px}
+.wr-delta:first-child{padding-left:0}
+.wr-delta .v{font-size:22px; font-weight:750; color:#7d7d8a; font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+.wr-delta .v .up{color:var(--i2); font-size:14px; font-weight:700; margin-left:5px}
+.wr-delta .k{font-size:11px; color:var(--mut); margin-top:6px}
+.wr-div{width:1px; align-self:stretch; background:rgba(255,255,255,.08); flex:none}
+.wr-mini{border:1px solid rgba(255,255,255,.06); border-radius:16px; padding:13px 15px; background:#161f33}
+.wr-logo{font-size:40px; font-weight:750; letter-spacing:-.03em; color:#59596a}
+.wr-uline{height:2px; width:58px; margin-top:11px; border-radius:2px; background:linear-gradient(90deg,var(--i),transparent)}
+.wr-head{display:flex; align-items:center; gap:12px; margin-bottom:16px; font-size:11px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--mut); font-weight:600}
+.wr-live{width:7px; height:7px; border-radius:50%; background:var(--i); box-shadow:0 0 8px var(--i); flex:none}
+@media (max-width:900px){ .wr{flex-direction:column} .wr-deltas .wr-delta{padding:0 12px} }
+
+/* ── Сайдбар ── */
+/* плавающий стеклянный остров — оторван от края, скруглён, плывёт над фото */
+.lg-side{position:sticky; top:14px; height:calc(100vh - 28px); margin:14px 0 14px 14px;
+  display:flex; flex-direction:column; padding:18px 12px; border-radius:26px; isolation:isolate;
+  background:var(--glass); -webkit-backdrop-filter:blur(var(--blur)) saturate(1.6);
+  backdrop-filter:blur(var(--blur)) saturate(1.6);
+  box-shadow:var(--bevel); border:1px solid var(--hair)}
+.lg-nav{display:flex; align-items:center; gap:10px; width:100%; text-align:left; font:inherit; font-size:13px;
+  color:var(--lo); background:none; border:0; cursor:pointer; padding:9px 11px; border-radius:12px;
+  transition:background .2s, color .2s, transform .18s var(--spring)}
+.lg-nav:hover{color:var(--hi); background:var(--glass-2); transform:translateX(2px)}
+.lg-nav.on{color:var(--hi); font-weight:600;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--acc) 20%,transparent),transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 26%,transparent)}
+.lg-nav-ic{width:18px; height:18px; display:grid; place-items:center; opacity:.9}
+.lg-theme{display:flex; align-items:center; gap:8px; width:100%; font:inherit; font-size:12px; color:var(--lo);
+  background:var(--glass-2); border:1px solid var(--hair); cursor:pointer; padding:10px 12px; border-radius:12px;
+  transition:color .2s, transform .18s var(--spring)}
+.lg-theme:hover{color:var(--hi); transform:translateY(-1px)}
+
+/* ── Шапка ── */
+/* flex-wrap — страховка: длинное имя раздела и плашка филиала на узком экране
+   переносятся, а не распирают страницу в горизонтальную прокрутку. */
+.lg-head{position:relative; display:flex; align-items:flex-end; justify-content:space-between;
+  flex-wrap:wrap; gap:24px; padding:38px 36px 14px; max-width:1400px; width:100%; margin:0 auto}
+.lg-head-copy{min-width:0}
+.lg-product-kicker{display:flex; align-items:center; gap:8px; color:var(--mute); font-size:12px; font-weight:600; letter-spacing:.01em}
+.lg-product-mark{display:grid; place-items:center; width:20px; height:20px; border-radius:6px;
+  color:#fff; background:var(--hi); font-size:12px; font-weight:800; letter-spacing:-.04em}
+:root[data-theme="dark"] .lg-product-mark{color:#111; background:#f5f5f7}
+.lg-title{margin:8px 0 0; font-size:44px; line-height:1.02; font-weight:720; letter-spacing:-.045em}
+.lg-section-label{font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); font-weight:600}
+.lg-head-actions{display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap}
+.lg-content{padding:20px 36px 132px; max-width:1400px; width:100%; margin:0 auto}
+.lg-seg{position:relative; display:flex; gap:2px; background:var(--glass-2); border:1px solid var(--hair);
+  border-radius:13px; padding:3px}
+.lg-per{position:relative; font:inherit; font-size:12px; color:var(--lo); background:none; border:0;
+  cursor:pointer; padding:7px 14px; border-radius:10px; transition:color .18s}
+.lg-per:hover{color:var(--hi)} .lg-per.on{color:var(--hi)}
+.lg-seg-pill{position:absolute; inset:0; border-radius:10px; background:var(--glass);
+  box-shadow:0 1px 0 var(--glass-hi), 0 4px 12px -6px rgba(20,40,90,.3)}
+
+/* ── Бейдж источника данных (ДЕМО / LIVE) ── */
+.lg-data-badge{display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:650; letter-spacing:.04em; text-transform:uppercase; padding:7px 11px; border-radius:999px; white-space:nowrap}
+.lg-data-badge .dot{width:7px; height:7px; border-radius:50%; flex:none}
+.lg-data-badge.demo{color:var(--amb); background:color-mix(in srgb,var(--amb) 14%,transparent); border:1px solid color-mix(in srgb,var(--amb) 40%,transparent)}
+.lg-data-badge.demo .dot{background:var(--amb)}
+.lg-data-badge.live{color:var(--grn); background:color-mix(in srgb,var(--grn) 14%,transparent); border:1px solid color-mix(in srgb,var(--grn) 40%,transparent)}
+.lg-data-badge.live .dot{background:var(--grn); box-shadow:0 0 6px var(--grn)}
+/* маленькая метка «демо» на захардкоженных блоках */
+.lg-demo-chip{display:inline-block; font-size:9px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--amb);
+  background:color-mix(in srgb,var(--amb) 15%,transparent); border:1px solid color-mix(in srgb,var(--amb) 38%,transparent); border-radius:6px; padding:2px 6px; margin-left:8px; vertical-align:middle}
+
+/* ── Переключатель филиалов ── */
+.lg-branch{position:relative}
+.lg-branch-btn{display:inline-flex; align-items:center; gap:8px; max-width:100%; min-width:0; font:inherit; font-size:13px; font-weight:600; color:var(--hi); cursor:pointer;
+  background:var(--glass-2); border:1px solid var(--hair); border-radius:12px; padding:8px 13px; transition:border-color .15s}
+.lg-branch-btn:hover{border-color:var(--acc)}
+.lg-branch-ic{color:var(--acc); font-size:12px}
+.lg-branch-caret{color:var(--mute); font-size:10px; margin-left:2px}
+.lg-branch-menu{position:absolute; top:calc(100% + 6px); right:0; z-index:35; min-width:210px; padding:6px;
+  background:var(--card); border:1px solid var(--hair); border-radius:14px; box-shadow:0 18px 40px -16px rgba(20,40,80,.5); display:flex; flex-direction:column; gap:2px}
+.lg-branch-head{font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--mute); font-weight:650; padding:6px 10px 4px}
+.lg-branch-item{display:flex; align-items:center; gap:9px; text-align:left; font:inherit; font-size:13px; color:var(--lo); background:none; border:0; border-radius:9px; padding:9px 11px; cursor:pointer; transition:.15s}
+.lg-branch-item:hover{background:var(--glass-2); color:var(--hi)}
+.lg-branch-item.on{color:var(--hi); font-weight:600; background:color-mix(in srgb, var(--acc) 12%, transparent)}
+.lg-branch-dot{width:7px; height:7px; border-radius:50%; background:var(--acc); flex:none; box-shadow:0 0 6px var(--acc)}
+.lg-branch-add{margin-top:4px; padding-top:11px; border-top:1px solid var(--hair-2); color:var(--acc); font-weight:600}
+
+/* ── Нижний плавающий док (десктоп) ── */
+/* мини-бар должен быть ЯВНО виден — свой фон по теме (перебивает прозрачный .glass по специфичности) */
+.lg-dock{position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:40;
+  display:flex; align-items:center; gap:2px; padding:6px 8px; border-radius:20px; max-width:calc(100vw - 32px);
+  -webkit-backdrop-filter:blur(28px) saturate(1.5); backdrop-filter:blur(28px) saturate(1.5)}
+:root[data-theme="light"] .lg-dock{background:rgba(255,255,255,.92);
+  border:1px solid rgba(20,26,44,.08); box-shadow:0 18px 48px -22px rgba(20,30,60,.34), 0 1px 0 rgba(255,255,255,.95) inset}
+:root[data-theme="dark"] .lg-dock{background:rgba(22,24,29,.86);
+  border:1px solid rgba(255,255,255,.10); box-shadow:0 20px 54px -20px rgba(0,0,0,.7), 0 1px 0 rgba(255,255,255,.14) inset}
+.lg-dock-brand{flex:none; font-weight:750; font-size:12px; color:var(--hi); border-radius:10px; padding:8px 9px;
+  line-height:1; background:var(--glass-2); border:1px solid var(--hair)}
+.lg-dock-sep{flex:none; width:1px; height:24px; background:var(--hair); margin:0 3px}
+.lg-dock-btn{position:relative; flex:none; width:42px; height:42px; border-radius:12px; border:0; background:none; padding:0;
+  display:grid; place-items:center; cursor:pointer; color:var(--lo); font:inherit;
+  transition:color .2s, transform .18s var(--spring)}
+.lg-dock-btn:hover{color:var(--hi); transform:translateY(-2px) scale(1.025)}
+.lg-dock-btn.on{color:var(--on-acc)}
+.lg-dock-pill{position:absolute; inset:0; border-radius:12px; z-index:0;
+  background:var(--acc); box-shadow:0 6px 18px -8px var(--acc-glow)}
+.lg-dock-badge{position:absolute; top:7px; right:7px; z-index:2; width:6px; height:6px; border-radius:50%; box-shadow:0 0 6px currentColor}
+.lg-dock-label{position:absolute; bottom:calc(100% + 10px); left:50%; transform:translateX(-50%); white-space:nowrap;
+  font-size:11px; font-weight:500; padding:5px 9px; border-radius:9px; color:var(--hi);
+  background:var(--glass); border:1px solid var(--hair); box-shadow:0 6px 16px -8px rgba(0,0,0,.5);
+  -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  opacity:0; pointer-events:none; transition:opacity .15s}
+.lg-dock-btn:hover .lg-dock-label{opacity:1}
+
+/* ── Город iiko (3D) — подписи в духе Linear ── */
+.iso3d-tag{display:flex; flex-direction:column; align-items:center; gap:3px; user-select:none;
+  font-family:var(--font); -webkit-font-smoothing:antialiased}
+.iso3d-pin{display:flex; align-items:center; gap:5px; white-space:nowrap; font-size:9.5px; font-weight:520;
+  color:#f7f8f8; background:color-mix(in srgb, var(--pin,#3b82f6) 15%, #17181c); border:1px solid color-mix(in srgb, var(--pin,#3b82f6) 42%, transparent);
+  border-radius:6px; padding:2px 7px; letter-spacing:-.01em; font-variant-numeric:tabular-nums;
+  box-shadow:0 2px 8px -3px rgba(0,0,0,.6)}
+.iso3d-pin .iso3d-dot{width:5px; height:5px; border-radius:50%; background:var(--pin,#3b82f6)}
+.iso3d-name{display:flex; align-items:center; gap:6px; white-space:nowrap; color:#f7f8f8;
+  background:rgba(23,24,28,.72); border:1px solid rgba(255,255,255,.09); border-radius:7px;
+  padding:3.5px 9px; box-shadow:0 4px 14px -8px rgba(0,0,0,.7); backdrop-filter:blur(8px) saturate(1.1)}
+.iso3d-name .iso3d-key{width:5px; height:5px; border-radius:1.5px; background:var(--pin,#3b82f6); flex:0 0 auto}
+.iso3d-name .iso3d-txt{display:flex; flex-direction:column; line-height:1.22}
+.iso3d-name b{font-size:10.5px; font-weight:520; letter-spacing:-.012em; color:#f7f8f8}
+.iso3d-name i{font-style:normal; font-size:8px; font-weight:400; letter-spacing:-.005em; color:#8a8f98}
+/* речевой пузырь человечка-диктора */
+.iso3d-say{position:relative; white-space:nowrap; font-size:9.5px; font-weight:520; letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums; color:#f7f8f8; background:color-mix(in srgb, var(--pin,#3b82f6) 16%, #17181c);
+  border:1px solid color-mix(in srgb, var(--pin,#3b82f6) 45%, transparent); border-radius:8px; padding:3px 8px;
+  box-shadow:0 3px 10px -4px rgba(0,0,0,.65)}
+.iso3d-say::after{content:''; position:absolute; left:50%; bottom:-4px; width:7px; height:7px; transform:translateX(-50%) rotate(45deg);
+  background:color-mix(in srgb, var(--pin,#3b82f6) 16%, #17181c); border-right:1px solid color-mix(in srgb, var(--pin,#3b82f6) 45%, transparent); border-bottom:1px solid color-mix(in srgb, var(--pin,#3b82f6) 45%, transparent)}
+/* тултип стройки «почему» */
+.iso3d-why{max-width:180px; white-space:normal; text-align:center; font-size:9px; font-weight:450; line-height:1.35;
+  letter-spacing:-.005em; color:#e9eaec; background:rgba(23,24,28,.92); border:1px solid rgba(216,193,74,.4);
+  border-radius:7px; padding:5px 9px; box-shadow:0 6px 18px -8px rgba(0,0,0,.8); backdrop-filter:blur(8px)}
+
+/* ── Небо сцены-города: тёмная = солнце в ночи, светлая = солнце + голубое небо ── */
+/* небо — чистый градиент по темам; само светило рисуется 3D-сферой в сцене */
+.iso-sky{
+  background:
+    radial-gradient(90% 70% at 72% -6%, rgba(79,110,247,.22), transparent 56%),
+    radial-gradient(140% 100% at 50% 122%, rgba(48,64,110,.20), transparent 55%),
+    linear-gradient(180deg, #0d1526 0%, #0b1120 48%, #080b16 100%);
+}
+:root[data-theme="light"] .iso-sky{
+  background:
+    radial-gradient(120% 90% at 50% 118%, rgba(255,244,214,.35), transparent 60%),
+    linear-gradient(180deg, #8ac0ea 0%, #aed7ed 38%, #d3ebe8 74%, #e8f2ec 100%);
+}
+
+.iso-scrim{position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.5)}
+.iso-sheet{position:fixed; left:0; right:0; bottom:0; z-index:51; height:88vh; border-radius:22px 22px 0 0;
+  background:var(--card); border-top:1px solid var(--hair); box-shadow:0 -24px 64px -22px rgba(0,0,0,.65);
+  display:flex; flex-direction:column; overflow:hidden}
+.iso-sheet-head{display:flex; align-items:center; justify-content:space-between; padding:18px 26px; border-bottom:1px solid var(--hair)}
+.iso-close{width:36px; height:36px; border-radius:50%; border:1px solid var(--hair); background:var(--glass-2);
+  color:var(--hi); cursor:pointer; font-size:14px; transition:background .18s}
+.iso-close:hover{background:var(--hair)}
+.iso-sheet-body{flex:1; overflow-y:auto; padding:24px 26px 44px}
+
+/* ── Лоток фуры (Склад) — фон меняется по теме, кузову даёт контраст ── */
+.truck-tray{border:1px solid var(--hair); border-radius:20px;
+  background:radial-gradient(72% 92% at 50% 32%, #ffffff 0%, #e9edf5 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 40px rgba(30,45,90,.04)}
+:root[data-theme="dark"] .truck-tray{
+  background:radial-gradient(72% 92% at 50% 32%, #262b35 0%, #12141a 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06), inset 0 0 40px rgba(0,0,0,.3)}
+
+/* ── Пол зала (герой главной) — адаптивный по теме ── */
+.iso-floor{border:1px solid var(--hair); border-radius:24px;
+  background:
+    linear-gradient(rgba(60,80,140,.03) 1px, transparent 1px) 0 0 / 9% 9%,
+    linear-gradient(90deg, rgba(60,80,140,.03) 1px, transparent 1px) 0 0 / 9% 9%,
+    radial-gradient(62% 56% at 50% 38%, #ffffff 0%, #edf0f7 92%);
+  box-shadow:inset 0 2px 26px rgba(30,45,90,.05), 0 46px 66px -32px rgba(30,45,90,.5)}
+:root[data-theme="dark"] .iso-floor{
+  background:
+    linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px) 0 0 / 9% 9%,
+    linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px) 0 0 / 9% 9%,
+    radial-gradient(62% 56% at 50% 40%, #232733 0%, #12141a 92%);
+  box-shadow:inset 0 2px 26px rgba(0,0,0,.35), 0 46px 66px -32px rgba(0,0,0,.7)}
+
+/* ── Макеты iOS-виджетов в рамке iPhone ── */
+.phone{margin:18px auto 0; width:344px; max-width:100%; border-radius:46px; padding:12px;
+  background:linear-gradient(160deg,#2c2f37,#15171c); box-shadow:0 34px 74px -30px rgba(20,40,80,.55), inset 0 0 0 2px rgba(255,255,255,.06)}
+.phone-screen{border-radius:34px; padding:16px 12px 24px; overflow:hidden; position:relative;
+  background:radial-gradient(70% 46% at 28% 6%, rgba(120,150,255,.32), transparent 70%), radial-gradient(60% 40% at 92% 94%, rgba(255,170,120,.24), transparent 70%), linear-gradient(180deg,#eef1f8,#dde3ef)}
+.phone-time{text-align:center; font-size:15px; font-weight:700; color:#1a2030; margin:2px 0 14px; font-variant-numeric:tabular-nums}
+.phone-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.pw{background:#fff; border-radius:20px; padding:13px; display:flex; flex-direction:column; box-shadow:0 8px 20px -10px rgba(20,40,80,.35)}
+.pw.s{grid-column:span 1; aspect-ratio:1/1}
+.pw.m{grid-column:span 2}
+.pw.l{grid-column:span 2}
+.pw-top{display:flex; align-items:center; gap:6px; font-size:10.5px; color:#8a90a2; font-weight:600}
+.pw-ic{font-size:9px; font-weight:800; color:#fff; background:linear-gradient(135deg,var(--acc),var(--acc-2)); border-radius:6px; padding:2px 5px; line-height:1}
+.pw-big{font-size:22px; font-weight:780; letter-spacing:-.03em; color:#141a2c; font-variant-numeric:tabular-nums}
+.pw-sub{font-size:10.5px; color:#8a90a2; margin-top:2px}
+
+/* ── Агент-ассистент у мини-бара + мини-чат ── */
+/* плавающий персонаж-ассистент снизу справа */
+.lg-agent-fab{position:fixed; right:22px; bottom:18px; z-index:45; border:0; background:none; padding:0; cursor:pointer; transition:transform .18s var(--spring)}
+.lg-agent-fab:hover{transform:translateY(-4px)}
+.lg-agent-fab img{height:70px; width:auto; display:block; filter:drop-shadow(0 10px 12px rgba(20,40,80,.32))}
+.lg-agent-dot{position:absolute; top:6px; right:8px; width:12px; height:12px; border-radius:50%; background:var(--grn); border:2px solid var(--card); box-shadow:0 0 8px var(--grn)}
+/* тост-уведомление рядом с агентом */
+.lg-agent-toast{position:fixed; right:22px; bottom:98px; z-index:47; display:flex; align-items:center; gap:11px; max-width:300px; text-align:left; cursor:pointer; font:inherit;
+  background:var(--card); border:1px solid var(--hair); border-radius:16px; padding:10px 14px 10px 10px; box-shadow:0 18px 42px -16px rgba(20,40,80,.55)}
+.lg-agent-toast img{width:36px; height:36px; border-radius:50%; object-fit:cover; object-position:center top; flex:none; background:var(--glass-2)}
+.lg-agent-toast span{font-size:12px; line-height:1.42; color:var(--hi)}
+
+.lg-chat{position:fixed; right:24px; bottom:98px; z-index:46; width:342px; max-width:calc(100vw - 32px); max-height:70vh;
+  display:flex; flex-direction:column; padding:0; overflow:hidden}
+.lg-chat-head{display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--hair)}
+.lg-chat-head img{width:40px; height:40px; border-radius:50%; object-fit:cover; object-position:center top; background:var(--glass-2); flex:none}
+.lg-chat-x{margin-left:auto; flex:none; width:28px; height:28px; border-radius:50%; border:1px solid var(--hair); background:var(--glass-2); color:var(--lo); cursor:pointer; font-size:15px; line-height:1}
+.lg-chat-body{flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:9px}
+.lg-msg{max-width:85%; font-size:12.5px; line-height:1.5; padding:9px 12px; border-radius:14px}
+.lg-msg.a{align-self:flex-start; background:var(--glass-2); color:var(--hi); border:1px solid var(--hair); border-bottom-left-radius:5px}
+.lg-msg.u{align-self:flex-end; background:linear-gradient(135deg,var(--acc),var(--acc-2)); color:#fff; border-bottom-right-radius:5px}
+.lg-chat-chips{display:flex; gap:7px; flex-wrap:wrap; padding:0 14px 10px}
+.lg-chat-chips button{font:inherit; font-size:11.5px; color:var(--lo); background:var(--glass-2); border:1px solid var(--hair); border-radius:20px; padding:6px 12px; cursor:pointer; transition:.15s}
+.lg-chat-chips button:hover{color:var(--hi); border-color:var(--acc)}
+.lg-chat-input{display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--hair)}
+.lg-chat-input input{flex:1; min-width:0; font:inherit; font-size:13px; color:var(--hi); background:var(--glass-2); border:1px solid var(--hair); border-radius:12px; padding:9px 12px}
+.lg-chat-input button{flex:none; width:38px; border:0; border-radius:12px; background:linear-gradient(135deg,var(--acc),var(--acc-2)); color:#fff; font-size:16px; cursor:pointer}
+@media (max-width:900px){ .lg-chat{bottom:140px; right:12px} .lg-agent-toast{bottom:150px} }
+
+/* ── Таб-бар ── */
+.lg-tabbar{display:none}
+.lg-bento{width:100%; gap:20px !important}
+.lg-page-state{display:flex; align-items:center; min-height:88px; gap:14px; color:var(--mute); font-size:14px}
+.lg-app-loader{min-height:100vh; display:flex; align-items:center; justify-content:center; gap:14px; color:var(--mute); font-size:14px}
+.lg-state-mark{display:inline-flex; align-items:center; gap:4px; flex:none}
+.lg-state-mark i{display:block; width:6px; height:6px; border-radius:50%; background:var(--acc); animation:lg-pulse 1.1s ease-in-out infinite}
+.lg-state-mark i:nth-child(2){animation-delay:.12s}.lg-state-mark i:nth-child(3){animation-delay:.24s}
+@keyframes lg-pulse{0%,70%,100%{opacity:.28;transform:translateY(0)}35%{opacity:1;transform:translateY(-3px)}}
+/* Элемент грида по умолчанию min-width:auto — широкая таблица внутри карточки
+   растягивала колонку, а с ней и всю страницу (670px в окне 390px, содержимое
+   уезжало за край на телефоне). Ноль заставляет карточку ужиматься, а таблица
+   продолжает скроллиться внутри своего контейнера. */
+.lg-bento>*{min-width:0}
+
+@media (max-width:900px){
+  .lg-dock{display:none}
+  .lg-side{display:none}
+  .lg-head{padding:20px 16px 8px; gap:16px; align-items:flex-start}
+  .lg-title{font-size:30px}
+  .lg-head-actions{width:100%; justify-content:flex-start}
+  .lg-content{padding:16px 14px 120px}
+  .lg-bento{grid-template-columns:repeat(2,1fr) !important}
+  .lg-bento>*{grid-column:span 2 !important}
+  /* Таблицы в карточках. Их в приложении десяток, и почти все — денежные, по
+     5–7 колонок: в 390 px они не влезают ни при каком шрифте и утаскивали за
+     собой всю страницу в горизонтальную прокрутку. Одно правило дешевле, чем
+     обёртка у каждой таблицы: на узком экране таблица скроллится внутри себя. */
+  .glass table{display:block; width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch}
+
+  .lg-tabbar{display:flex; position:fixed; left:10px; right:10px; bottom:10px; z-index:20; padding:7px;
+    justify-content:space-around; border-radius:24px;
+    background:var(--card); border:1px solid var(--hair); box-shadow:0 14px 40px -16px rgba(0,0,0,.5)}
+  .lg-tab{flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; font:inherit; font-size:11px;
+    color:var(--lo); background:none; border:0; cursor:pointer; padding:7px 4px; border-radius:16px; transition:.18s}
+  .lg-tab.on{color:var(--hi); background:color-mix(in srgb,var(--acc) 16%,transparent)}
+  /* агент стоит над таб-баром, а не поверх него: иначе он перехватывает тапы
+     по правому табу («Ещё») и половина разделов снова недостижима */
+  .lg-agent-fab{right:14px; bottom:82px}
+  .lg-agent-fab img{height:54px}
+}
+/* ── Лист «Ещё»: полный список разделов там, где док скрыт ── */
+.lg-sheet-scrim{position:fixed; inset:0; z-index:45; background:rgba(10,14,24,.44); backdrop-filter:blur(2px)}
+.lg-sheet{position:fixed; left:0; right:0; bottom:0; z-index:46; max-height:76vh; overflow-y:auto;
+  padding:10px 14px calc(84px + env(safe-area-inset-bottom,0px)); border-radius:26px 26px 0 0;
+  background:var(--card); border-top:1px solid var(--hair); box-shadow:0 -18px 50px -20px rgba(0,0,0,.5)}
+.lg-sheet-grip{width:38px; height:4px; border-radius:2px; background:var(--hair); margin:2px auto 12px}
+.lg-sheet-group{margin-bottom:14px}
+.lg-sheet-head{font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--mute); font-weight:600; padding:0 6px 6px}
+.lg-sheet-item{position:relative; display:flex; align-items:center; gap:11px; width:100%; padding:11px 12px; margin-bottom:2px;
+  font:inherit; font-size:14px; color:var(--hi); text-align:left; background:none; border:0; border-radius:14px; cursor:pointer}
+.lg-sheet-item.on{background:color-mix(in srgb,var(--acc) 15%,transparent); font-weight:600}
+.lg-sheet-badge{position:absolute; right:14px; width:6px; height:6px; border-radius:50%}
+
+@media (max-width:560px){
+  .lg-bento{grid-template-columns:1fr !important; gap:14px !important}
+  .lg-bento>*{grid-column:span 1 !important}
+  .glass{padding:20px}
+  .lg-seg{max-width:100%; overflow-x:auto}
+  .lg-per{padding:7px 11px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important}
+}
+
+
+/* «Гора»: склон + рейтинг рядом. На узком экране колонки складываются —
+   фотография в пол-экрана и подписи под ней читаются лучше, чем две тесные. */
+.lg-peak { grid-template-columns: minmax(230px, 300px) 1fr; align-items: center; }
+@media (max-width: 720px) {
+  .lg-peak { grid-template-columns: 1fr; }
+}
+
+/* ── Разбор лосося: плитки позиций, полоса отхода, переключатель периода ──
+   Тот же материал, что у карточек, на уровень внутрь: стекло тоньше, кромка
+   тише, радиус меньше. Тени фото задаём в CSS, а не инлайном: на тёмной теме
+   синеватая тень не видна, на светлой чёрная выглядит грязью. */
+.sal-tile{display:block; padding:12px 13px 13px; border-radius:16px;
+  background:var(--glass-2); border:1px solid var(--hair);
+  box-shadow:0 1px 0 rgba(255,255,255,.10) inset;
+  transition:border-color .18s ease, box-shadow .18s ease}
+.sal-tile:focus-within{border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-glow)}
+.sal-tile input{width:100%; min-width:0; padding:0; border:none; outline:none;
+  background:transparent; color:var(--hi); font:inherit; font-size:22px; font-weight:700;
+  letter-spacing:-.02em; font-variant-numeric:tabular-nums}
+.sal-tile input::placeholder{color:var(--mute); font-weight:600}
+
+.sal-photo{filter:drop-shadow(0 6px 10px rgba(20,30,60,.18))}
+:root[data-theme="dark"] .sal-photo{filter:drop-shadow(0 8px 14px rgba(0,0,0,.55))}
+.sal-shade{position:absolute; bottom:2px; width:58%; height:12px; border-radius:50%;
+  background:radial-gradient(closest-side, rgba(20,30,60,.20), transparent); filter:blur(3px)}
+:root[data-theme="dark"] .sal-shade{background:radial-gradient(closest-side, rgba(0,0,0,.55), transparent)}
+
+.sal-seg{display:inline-flex; gap:2px; padding:3px; border-radius:14px;
+  background:var(--glass-2); border:1px solid var(--hair)}
+.sal-seg button{position:relative; padding:7px 12px; border-radius:11px; border:none;
+  background:transparent; cursor:pointer; font:inherit; font-size:12.5px; color:var(--mute)}
+.sal-seg button[aria-pressed="true"]{color:var(--hi); font-weight:700}
+.sal-pill{position:absolute; inset:0; border-radius:11px; background:var(--card);
+  box-shadow:var(--shadow)}
+:root[data-theme="dark"] .sal-pill{background:var(--card-2)}
+
+.sal-bar{position:relative; flex:1; max-width:160px; height:7px; border-radius:4px;
+  background:var(--hair-2); overflow:hidden}

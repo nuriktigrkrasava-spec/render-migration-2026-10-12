@@ -1,0 +1,151 @@
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 34px;
+}
+
+.stat {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
+  animation: t-rise 0.4s ease both;
+}
+
+.statValue {
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.statLabel {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.students {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.student {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 22px;
+  animation: t-rise 0.4s ease both;
+}
+
+.studentHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.avatar {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: #fbf7f0;
+  background: linear-gradient(150deg, var(--sage) 0%, #45533f 100%);
+}
+
+.studentName {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.studentMeta {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.books {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bookRow {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.bookTitle {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progressWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.track {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--clay-soft), var(--clay));
+  transition: width 0.4s ease;
+}
+
+.percent {
+  flex: none;
+  width: 42px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.partsCount {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.noBooks {
+  font-size: 13px;
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .bookRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

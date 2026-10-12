@@ -1,0 +1,216 @@
+/* Лента — «Акт сверки»: живой финансовый документ. Лист бумаги на столе, а не
+   коробка и не пустота: тёплая бумажная поверхность с мягким подъёмом, шапка
+   выписки с крупной суммой моноширинным, двойная линейка как в бухгалтерском
+   акте, записи-строки с числами в одну правую колонку, итог внизу.
+
+   Хроматический цвет — только сумма денег: красный утекло, зелёный вернули.
+   Всё остальное — тёплая серая шкала. Слой самодостаточен: свои токены,
+   не зависит от glass-токенов оболочки; тема следует переключателю (data-theme). */
+
+.cs-feed {
+  /* светлая тема по умолчанию — тёплая бумага */
+  --cs-desk:    #E9E5DC;   /* стол под листом */
+  --cs-sheet:   #FBFAF6;   /* сам лист — тёплый почти-белый */
+  --cs-ink:     #17181C;
+  --cs-ink-2:   #565B62;
+  --cs-ink-3:   #908D84;
+  --cs-rule:    #E7E3D9;   /* волосяная линейка между записями */
+  --cs-rule-2:  #CBC6B9;   /* линейка перед итогом / двойная */
+  --cs-loss:    #C2321E;
+  --cs-gain:    #1F6B4A;
+  --cs-lift:    0 1px 1px rgba(40,34,20,.04), 0 18px 40px -22px rgba(40,34,20,.28);
+
+  --cs-font: "Onest", "Golos Text", ui-sans-serif, system-ui, sans-serif;
+  --cs-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  max-width: 600px;
+  margin: 0 auto;
+  font-family: var(--cs-font);
+  font-weight: 400;
+  color: var(--cs-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+:root[data-theme="dark"] .cs-feed {
+  --cs-desk:    #0A0B0D;
+  --cs-sheet:   #15171B;   /* лист на тёмном столе */
+  --cs-ink:     #ECEDEB;
+  --cs-ink-2:   #9AA0A8;
+  --cs-ink-3:   #6A6F76;
+  --cs-rule:    #23252A;
+  --cs-rule-2:  #363940;
+  --cs-loss:    #E4573F;
+  --cs-gain:    #4BAE84;
+  --cs-lift:    0 1px 1px rgba(0,0,0,.5), 0 22px 50px -26px rgba(0,0,0,.9);
+}
+
+/* ── стол под листом: полноэкранная бухгалтерская подложка в линейку ─────── */
+/* На экране Ленты прячем стеклянные обои оболочки — документ владеет холстом. */
+.lg-root.on-feed .lg-wallpaper,
+.lg-root.on-feed .lg-grain { display: none; }
+.lg-root.on-feed > main { position: relative; z-index: 1; }
+
+.cs-desk {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  --desk-bg:   #E7E3D9;   /* тёплый стол */
+  --desk-line: rgba(38,30,12,.045);
+  --desk-edge: rgba(38,30,12,.05);
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 33px, var(--desk-line) 33px 34px),
+    var(--desk-bg);
+  box-shadow: inset 0 0 180px rgba(38,30,12,.06);
+}
+.cs-desk::before {
+  /* поле-корешок слева, как на бухгалтерском бланке */
+  content: ""; position: absolute; top: 0; bottom: 0; left: max(40px, calc(50% - 300px - 64px));
+  border-left: 1px solid var(--desk-edge);
+}
+:root[data-theme="dark"] .cs-desk {
+  --desk-bg:   #0A0B0D;
+  --desk-line: rgba(255,255,255,.028);
+  --desk-edge: rgba(255,255,255,.04);
+  box-shadow: inset 0 0 220px rgba(0,0,0,.5);
+}
+
+/* ── лист ────────────────────────────────────────────────────────────────── */
+.cs-sheet {
+  background: var(--cs-sheet);
+  box-shadow: var(--cs-lift);
+  border-radius: 3px;
+  padding: 34px 40px 26px;
+}
+
+/* ── шапка выписки: сигнатура ленты ─────────────────────────────────────── */
+.cs-mast-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--cs-ink-3); font-weight: 500;
+}
+.cs-mast-title { color: var(--cs-ink-2); }
+
+.cs-mast-figure {
+  display: flex; align-items: baseline; gap: 12px;
+  margin: 22px 0 0; padding-top: 20px; border-top: 1px solid var(--cs-rule-2);
+}
+.cs-mast-label {
+  font-size: 13px; color: var(--cs-ink-3); letter-spacing: .02em;
+  align-self: flex-start; margin-top: 8px;
+}
+.cs-mast-sum {
+  font-family: var(--cs-mono); font-variant-numeric: tabular-nums;
+  font-size: 46px; font-weight: 500; line-height: .95; letter-spacing: -.03em;
+  color: var(--cs-loss); margin-left: auto; white-space: nowrap;
+}
+.cs-mast-sub { margin-top: 12px; font-size: 13.5px; color: var(--cs-ink-2); line-height: 1.5; }
+
+/* ── фильтры: текстовые чипы ─────────────────────────────────────────────── */
+.cs-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 16px; }
+.cs-chip {
+  font: inherit; font-size: 12.5px; color: var(--cs-ink-3); cursor: pointer;
+  background: transparent; border: 1px solid var(--cs-rule); border-radius: 6px;
+  padding: 5px 11px; transition: color .18s ease-out, border-color .18s ease-out;
+}
+.cs-chip:hover { color: var(--cs-ink-2); }
+.cs-chip.on { color: var(--cs-ink); border-color: var(--cs-rule-2); }
+.cs-chip:focus-visible { outline: 2px solid var(--cs-ink); outline-offset: 2px; }
+
+/* ── реестр записей ──────────────────────────────────────────────────────── */
+/* двойная линейка перед реестром — граница шапки, как в акте */
+.cs-ledger {
+  margin-top: 22px;
+  border-top: 3px double var(--cs-rule-2);
+}
+
+/* запись: строка на ленте, не карточка. Без фона и скругления */
+.cs-card { padding: 20px 0 18px; border-bottom: 1px solid var(--cs-rule); }
+.cs-card:last-child { border-bottom: 0; }
+.cs-card.rejected { opacity: .45; }
+
+.cs-badge {
+  font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--cs-ink-3); font-weight: 500; margin-bottom: 10px;
+}
+.cs-badge .sep { margin: 0 6px; }
+
+/* заголовок слева, число справа — числа выстраиваются в одну колонку вниз */
+.cs-top { display: flex; align-items: baseline; gap: 18px; }
+.cs-title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 16px; font-weight: 400; line-height: 1.55; color: var(--cs-ink);
+}
+.cs-fig { flex: 0 0 auto; text-align: right; }
+.cs-amount {
+  font-family: var(--cs-mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  font-size: 23px; font-weight: 500; line-height: 1.1; color: var(--cs-loss); white-space: nowrap;
+}
+.cs-amount.gain { color: var(--cs-gain); }
+.cs-est {
+  margin-top: 4px; font-size: 13px; font-weight: 400; line-height: 1.4; color: var(--cs-ink-3);
+}
+.cs-est .tag { text-transform: uppercase; letter-spacing: .07em; font-size: 11px; margin-right: 6px; }
+
+.cs-body {
+  margin: 10px 0 0; font-size: 14px; font-weight: 400; line-height: 1.6;
+  color: var(--cs-ink-2); max-width: 52ch;
+}
+
+/* ── кнопки: текст без рамок; основное действие подчёркнуто линией в ink ── */
+.cs-actions { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 16px; }
+.cs-btn {
+  font: inherit; font-size: 14px; font-weight: 400; cursor: pointer;
+  background: none; border: 0; padding: 2px 0; color: var(--cs-ink-3);
+  transition: color .18s ease-out;
+}
+.cs-btn:hover { color: var(--cs-ink-2); }
+.cs-btn.primary {
+  color: var(--cs-ink); font-weight: 500;
+  text-decoration: underline; text-underline-offset: 4px;
+  text-decoration-color: var(--cs-ink); text-decoration-thickness: 1px;
+}
+.cs-btn:focus-visible { outline: 2px solid var(--cs-ink); outline-offset: 3px; border-radius: 2px; }
+
+.cs-taken { margin-top: 14px; font-size: 14px; color: var(--cs-gain); font-weight: 500; }
+
+.cs-reasons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+
+/* доказательная база — первичка */
+.cs-evi { margin-top: 14px; border-top: 1px solid var(--cs-rule); padding-top: 12px; }
+.cs-evi-row {
+  display: flex; align-items: baseline; gap: 12px; padding: 5px 0;
+  font-size: 13.5px; color: var(--cs-ink-2);
+}
+.cs-evi-row .k {
+  flex: 0 0 88px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--cs-ink-3); font-weight: 500;
+}
+.cs-evi-row .src { margin-left: auto; font-size: 12.5px; color: var(--cs-ink-3); white-space: nowrap; }
+
+.cs-state { padding: 30px 2px; font-size: 14px; color: var(--cs-ink-3); }
+
+/* ── итог: двойная линейка, как закрытие акта ───────────────────────────── */
+.cs-total {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  margin-top: 4px; padding-top: 16px; border-top: 3px double var(--cs-rule-2);
+}
+.cs-total-label {
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--cs-ink-3); font-weight: 500;
+}
+.cs-total-sum {
+  font-family: var(--cs-mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  font-size: 17px; font-weight: 500; color: var(--cs-loss);
+}
+
+/* появление записей — 180мс ease-out, отключается reduced-motion */
+@media (prefers-reduced-motion: no-preference) {
+  .cs-card { animation: cs-in .18s ease-out both; }
+  @keyframes cs-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+}
+
+/* мобильный: лист во всю ширину, число уходит под заголовок */
+@media (max-width: 560px) {
+  .cs-sheet { padding: 26px 20px 22px; border-radius: 0; }
+  .cs-mast-sum { font-size: 38px; }
+  .cs-top { flex-direction: column; gap: 8px; }
+  .cs-fig { text-align: left; }
+}

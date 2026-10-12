@@ -1,0 +1,11 @@
+[
+  {
+    "id": "dpg-d96bgp9kh4rs73dircsg-a",
+    "name": "saya-kds-db",
+    "region": "frankfurt",
+    "version": "16",
+    "databaseName": "saya_kds_db_vu04",
+    "databaseUser": "saya_kds_db_vu04_user",
+    "status": "available"
+  }
+]

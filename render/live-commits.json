@@ -1,0 +1,22 @@
+{
+  "iiko": {
+    "live_commit": "bb1890f9bb6e0d6442c6a5be452936e99b8c41de",
+    "status": "live",
+    "source": "source/iiko"
+  },
+  "iiko-demo": {
+    "live_commit": "746d6964fd213c25035489e499d3d18c0495cd7a",
+    "status": "live",
+    "source": "source/iiko-demo"
+  },
+  "saya-kds": {
+    "live_commit": "57caa79dc4a4996cc9d6ddc62869b26fb04c1410",
+    "status": "live",
+    "source": "source/saya-kds"
+  },
+  "reading-platform": {
+    "live_commit": "cf04c913a504228b8b54919b21f0cff3915ccd76",
+    "status": "live",
+    "source": "source/reading-platform"
+  }
+}

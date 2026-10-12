@@ -1,0 +1,677 @@
+/* Saya — Telegram mini-app courier screen.
+   Phone-width, mobile-first. Theme-aware via Telegram theme params,
+   with solid LIGHT fallbacks so it looks good with or without theming. */
+:root,
+.tg {
+  --tg-bg: #f4f4f7;
+  --tg-text: #0f172a;
+  --tg-hint: #8a8a8e;
+  --tg-accent: #2ea6ff;
+  --tg-accent-text: #ffffff;
+  --tg-card: #ffffff;
+
+  /* derived tokens */
+  --tg-success: #34c759;
+  --tg-success-text: #ffffff;
+  --tg-danger: #f04438;
+  --tg-border: rgba(0, 0, 0, 0.07);
+  --tg-ghost: rgba(0, 0, 0, 0.05);
+  --tg-ghost-hover: rgba(0, 0, 0, 0.09);
+  --tg-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.05);
+  --tg-radius: 16px;
+  --tg-radius-sm: 12px;
+}
+
+.tg {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+.tg *,
+.tg *::before,
+.tg *::after {
+  box-sizing: border-box;
+}
+
+/* ---- centered states (loading / outside / pin) -------------------------- */
+.tg__center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  text-align: center;
+  gap: 12px;
+}
+
+.tg__logo {
+  font-size: 56px;
+  line-height: 1;
+}
+
+.tg__title {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.tg__muted {
+  margin: 0;
+  color: var(--tg-hint);
+  font-size: 16px;
+}
+
+.tg__err {
+  margin: 4px 0 0;
+  color: var(--tg-danger);
+  font-size: 14px;
+  min-height: 18px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.tg__err--show {
+  opacity: 1;
+}
+
+/* ---- вход по явке: список имён ------------------------------------------- */
+.tg__center--top {
+  justify-content: flex-start;
+  padding-top: 24px;
+}
+
+.tg__emplist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+  margin: 8px auto 0;
+}
+
+.tg__branch {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tg__branch-title {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tg-hint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tg__emp {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: var(--tg-radius);
+  background: var(--tg-card);
+  color: var(--tg-text);
+  font-size: 17px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--tg-shadow);
+  transition: filter 0.1s ease, transform 0.05s ease;
+}
+
+.tg__emp:active {
+  transform: scale(0.98);
+  filter: brightness(0.95);
+}
+
+.tg__emp:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tg__emp-name {
+  font-weight: 600;
+}
+
+.tg__emp-meta {
+  font-size: 13px;
+  color: var(--tg-hint);
+}
+
+.tg__emp-busy {
+  color: #e5a50a;
+}
+
+.tg__emplist-refresh {
+  margin-top: 14px;
+}
+
+.tg__hint--pick {
+  margin-top: 10px;
+}
+
+/* ---- вкладки «Мои / Все доставки» + деталка --------------------------------- */
+.tg__tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tg__tab {
+  flex: 1;
+  appearance: none;
+  border: none;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--tg-card);
+  color: var(--tg-hint);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tg__tab--on {
+  background: var(--tg-accent);
+  color: var(--tg-accent-text);
+}
+
+.tg-card--tap {
+  appearance: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.tg-card--tap:active {
+  opacity: 0.75;
+}
+
+.tg-card__status {
+  font-size: 13px;
+  color: var(--tg-hint);
+  white-space: nowrap;
+}
+
+/* Собранный заказ можно забирать прямо сейчас — выделяем зелёным. */
+.tg-card__status--ready {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+/* Тип оплаты в подтверждении закрытия заказа. */
+.tg-payment-sheet__pay {
+  margin: 10px 0 4px;
+  font-size: 16px;
+}
+
+/* Сколько ещё получить с клиента (сплит: часть закрыта бонусами/онлайном). */
+.tg-payment-sheet__due {
+  margin: 8px 0 2px;
+  font-size: 17px;
+  color: #b45309;
+}
+
+.tg-detail__row {
+  margin: 6px 0;
+  font-size: 15px;
+  text-align: left;
+}
+
+.tg-detail__items {
+  margin: 8px 0;
+  text-align: left;
+}
+
+/* Ссылки-кнопки (tel:) в деталке — как обычные кнопки */
+.tg-payment-sheet__btns a.tg-btn {
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---- orders view : header ----------------------------------------------- */
+.tg__header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--tg-card);
+  border-bottom: 1px solid var(--tg-border);
+}
+
+.tg__header-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tg__header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tg__icon-btn {
+  flex: 0 0 auto;
+  appearance: none;
+  border: none;
+  background: var(--tg-ghost);
+  color: var(--tg-text);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--tg-radius-sm);
+  font-size: 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, transform 0.05s ease;
+}
+
+.tg__icon-btn:active {
+  transform: scale(0.94);
+}
+
+.tg__icon-btn:hover {
+  background: var(--tg-ghost-hover);
+}
+
+.tg__icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tg__logout {
+  width: auto;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tg-hint);
+}
+
+/* ---- orders view : body ------------------------------------------------- */
+.tg__body {
+  flex: 1;
+  padding: 12px 14px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---- geolocation pill --------------------------------------------------- */
+.tg__geo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--tg-radius-sm);
+  background: var(--tg-ghost);
+  border: 1px solid var(--tg-border);
+}
+
+.tg__geo--on {
+  background: rgba(52, 199, 89, 0.12);
+  border-color: rgba(52, 199, 89, 0.28);
+}
+
+.tg__geo--off {
+  background: rgba(255, 159, 10, 0.12);
+  border-color: rgba(255, 159, 10, 0.30);
+}
+
+.tg__geo-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.tg__geo-text b {
+  font-weight: 700;
+}
+
+.tg__geo-btn {
+  flex: 0 0 auto;
+  appearance: none;
+  border: none;
+  background: var(--tg-accent);
+  color: var(--tg-accent-text);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.1s ease, transform 0.05s ease;
+}
+
+.tg__geo-btn:active {
+  transform: scale(0.97);
+  filter: brightness(0.95);
+}
+
+/* ---- empty state -------------------------------------------------------- */
+.tg__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 56px 20px;
+  text-align: center;
+}
+
+/* ---- order cards -------------------------------------------------------- */
+.tg__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tg-card {
+  background: var(--tg-card);
+  border-radius: var(--tg-radius);
+  padding: 16px;
+  box-shadow: var(--tg-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tg-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tg-card__num {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.tg-card__cust {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tg-text);
+  text-align: right;
+}
+
+.tg-card__addr {
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--tg-text);
+}
+
+/* Подъезд, этаж, квартира — крупно и отдельно от строки адреса: курьер читает их
+   на бегу, в подъезде, часто одной рукой. */
+.tg-card__addr-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tg-chip {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tg-accent) 14%, transparent);
+  color: var(--tg-text);
+  white-space: nowrap;
+}
+
+.tg-card__phone {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tg-accent);
+  text-decoration: none;
+  width: fit-content;
+}
+
+/* Комментарий клиента («без помидор») — заметная плашка. */
+.tg-card__note {
+  font-size: 14px;
+  font-weight: 700;
+  color: #7a4f00;
+  background: #fff3cd;
+  border: 1px solid #f0c000;
+  border-radius: 8px;
+  padding: 6px 10px;
+  line-height: 1.35;
+}
+.tg-card__note--inline {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: none;
+  background: #fff3cd;
+}
+
+.tg-card__items {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--tg-border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+  color: var(--tg-hint);
+}
+
+.tg-card__amount {
+  color: var(--tg-text);
+  font-weight: 700;
+}
+
+.tg-card__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* ---- button system : primary / success / ghost ------------------------- */
+.tg-btn {
+  flex: 1 1 0;
+  appearance: none;
+  border: none;
+  border-radius: var(--tg-radius-sm);
+  min-height: 48px;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: filter 0.1s ease, transform 0.05s ease;
+}
+
+.tg-btn:active {
+  transform: scale(0.98);
+}
+
+.tg-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tg-btn--primary {
+  background: var(--tg-accent);
+  color: var(--tg-accent-text);
+}
+
+.tg-btn--success {
+  background: var(--tg-success);
+  color: var(--tg-success-text);
+}
+
+.tg-btn--ghost {
+  background: var(--tg-ghost);
+  color: var(--tg-text);
+}
+
+.tg-btn--primary:active,
+.tg-btn--success:active {
+  filter: brightness(0.95);
+}
+
+/* ---- payment-kind overlay ----------------------------------------------- */
+.tg-payment-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.tg-payment-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: var(--tg-card);
+  border-radius: var(--tg-radius) var(--tg-radius) 0 0;
+  padding: 24px 20px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tg-payment-sheet__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.tg-payment-sheet__sub {
+  margin: 0;
+  font-size: 14px;
+  color: var(--tg-hint);
+  text-align: center;
+}
+
+.tg-payment-sheet__btns {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.tg-payment-sheet__cancel {
+  margin-top: 4px;
+}
+
+.tg-btn--cash {
+  background: #16a34a;
+  color: #fff;
+}
+
+.tg-btn--card {
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.tg-btn--cash:active,
+.tg-btn--card:active {
+  filter: brightness(0.92);
+}
+
+/* Real payment type buttons (dynamic list) */
+.tg-payment-sheet__btns--wrap {
+  flex-wrap: wrap;
+}
+
+.tg-btn--pay-type {
+  background: #1e40af;
+  color: #fff;
+  flex: 1 1 calc(50% - 5px);
+  min-width: 120px;
+}
+
+.tg-btn--pay-type--default {
+  background: #15803d;
+  outline: 3px solid #bbf7d0;
+}
+
+.tg-btn--pay-type:active {
+  filter: brightness(0.92);
+}
+
+/* Payment type badge on courier order card */
+.tg-card__pay-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 4px 10px;
+  width: fit-content;
+}
+
+/* ---- reduced motion ----------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .tg *,
+  .tg *::before,
+  .tg *::after {
+    transition: none !important;
+  }
+}
+
+/* Подсказка курьеру про трансляцию геопозиции (Live Location). */
+.tg__hint {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eef6ff;
+  border: 1px solid #bcdcff;
+  color: #234;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Сумма заказа: курьер везёт деньги, и знать их до подъезда важнее, чем
+   открывать деталку. Держим рядом с номером и таким же весом. */
+.tg-card__sum {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--tg-accent);
+  white-space: nowrap;
+}
+
+.tg-detail__sum {
+  font-size: 18px;
+  font-weight: 700;
+}

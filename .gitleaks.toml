@@ -1,0 +1,7 @@
+title = "Render transfer source scan"
+[extend]
+useDefault = true
+[[allowlists]]
+description = "Browser localStorage namespace only; not an authentication key"
+regexTarget = "match"
+regexes = ['''(?:LEGACY_KEY|SCHED_KEY)\s*=\s*["']iiko\.schedule\.v1["']''']

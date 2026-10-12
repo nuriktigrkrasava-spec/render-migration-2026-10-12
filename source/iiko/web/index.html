@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iiko Финдиректор</title>
+  </head>
+  <body>
+    <!-- Подпись Telegram нужна, когда сайт открывают из бота: без неё прод
+         отвечает 401 на каждый запрос (локально спасает пустой BOT_TOKEN).
+         В обычном браузере скрипт просто ничего не даёт, и вход идёт по ?m=. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

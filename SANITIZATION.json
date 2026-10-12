@@ -1,0 +1,19 @@
+[
+  "source/iiko/reviews.py: third-party keys replaced with environment variables",
+  "source/iiko/mountain_routes.py: fixed signing fallback removed; WIDGET_SECRET/ENCRYPTION_KEY required",
+  "source/iiko/widget_routes.py: fixed signing fallback removed; WIDGET_SECRET/ENCRYPTION_KEY required",
+  "source/iiko/api.py: personal default Telegram identifier removed",
+  "source/iiko/wwww.md: internal note omitted",
+  "source/iiko/ыitr.md: internal note omitted",
+  "source/iiko/wewew.md: internal note omitted",
+  "source/iiko/wxwx.md: internal note omitted",
+  "source/iiko/IIKO_API_REFERENCE.md: internal note omitted",
+  "source/iiko/234.md: internal note omitted",
+  "source/iiko/docs: internal docs/screenshots omitted",
+  "source/iiko-demo/reviews.py: third-party keys replaced with environment variables",
+  "source/iiko-demo/api.py: personal default Telegram identifier removed",
+  "source/iiko-demo/IIKO_API_REFERENCE.md: internal note omitted",
+  "source/iiko-demo/docs: internal docs/screenshots omitted",
+  "source/saya-kds/real-order.png: operational screenshot omitted from transfer copy",
+  "source/saya-kds/docs/PHOTO-2026-06-17-13-42-13.jpg: operational screenshot omitted from transfer copy"
+]

@@ -1,0 +1,587 @@
+from __future__ import annotations
+import httpx
+from datetime import datetime, timedelta
+from app.config import settings
+from app.schemas import NormalizedOrder, WebhookItem
+
+BASE = "https://api-ru.iiko.services"
+
+DELIVERY_ORDER_STATUSES = [
+    "WaitCooking", "ReadyForCooking", "CookingStarted", "CookingCompleted",
+    "Waiting", "OnWay", "Delivered", "Closed", "Cancelled",
+]
+
+# Статусы заказов зала/выноса (TableOrderUpdate). Без них iiko НЕ шлёт зал/вынос/
+# самовывоз — а значит они не появляются на планшете сборщика/кухни.
+TABLE_ORDER_STATUSES = ["New", "Bill", "Closed", "Deleted"]
+
+ITEM_STATUSES = ["Added", "CookingStarted", "CookingCompleted", "Served"]
+
+
+async def get_token() -> str:
+    async with httpx.AsyncClient(timeout=30) as client:
+        # ВАЖНО: путь без /auth/ — именно так ключ работает.
+        r = await client.post(f"{BASE}/api/1/access_token",
+                              json={"apiLogin": settings.cloud_api_login})
+        r.raise_for_status()
+        return r.json()["token"]
+
+
+async def fetch_organizations() -> list[dict]:
+    """Список организаций Cloud (для связки филиал RMS ↔ Cloud-ID). [{id, name}]"""
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{BASE}/api/1/organizations",
+                              headers={"Authorization": f"Bearer {token}"},
+                              json={"returnAdditionalInfo": False})
+        r.raise_for_status()
+        return r.json().get("organizations", [])
+
+
+async def fetch_delivery_by_id(organization_id: str, order_id: str) -> dict | None:
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"{BASE}/api/1/deliveries/by_id",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"organizationId": organization_id, "orderIds": [order_id]})
+        r.raise_for_status()
+        orders = r.json().get("orders", [])
+        return orders[0] if orders else None
+
+
+def _flatten_by_organizations(data: dict) -> dict:
+    """Ответы deliveries/* приходят вложенными по организациям — сводим к
+    плоскому {orders, maxRevision}, чтобы поллер не знал про эту форму."""
+    orders: list[dict] = []
+    for og in (data.get("ordersByOrganizations") or []):
+        orders += (og.get("orders") or [])
+    if not orders:
+        orders = data.get("orders") or []
+    return {"orders": orders, "maxRevision": data.get("maxRevision")}
+
+
+async def fetch_deliveries_by_revision(organization_id: str, start_revision: int) -> dict:
+    """Инкрементально: заказы, изменённые после start_revision. Возвращает {orders, maxRevision}.
+
+    ВАЖНО: iiko ждёт organizationIds (массив). С одиночным organizationId endpoint
+    отвечает 400 INVALID_BODY_JSON_FORMAT — из-за этого фоллбэк-поллер, который
+    должен добирать пропущенные вебхуками обновления, молча не работал.
+    """
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(f"{BASE}/api/1/deliveries/by_revision",
+                         headers={"Authorization": f"Bearer {token}"},
+                         json={"organizationIds": [organization_id],
+                               "startRevision": start_revision})
+        r.raise_for_status()
+        return _flatten_by_organizations(r.json())
+
+
+async def fetch_deliveries_by_date(organization_id: str, days: int = 2) -> dict:
+    """Заказы филиала за последние `days` суток + текущая ревизия.
+
+    Нужен для первого прохода поллера: стартовать by_revision не с чего —
+    ревизию 0 iiko отклоняет (TOO_OLD_REVISION). Поэтому догоняем по дате и
+    оттуда же берём стартовый курсор (maxRevision).
+    """
+    token = await get_token()
+    local_now = datetime.utcnow() + timedelta(hours=settings.iiko_tz_offset_hours)
+    date_from = (local_now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00.000")
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.post(f"{BASE}/api/1/deliveries/by_delivery_date_and_status",
+                         headers={"Authorization": f"Bearer {token}"},
+                         json={"organizationIds": [organization_id],
+                               "deliveryDateFrom": date_from})
+        r.raise_for_status()
+        return _flatten_by_organizations(r.json())
+
+
+async def fetch_nomenclature(organization_id: str) -> dict:
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(f"{BASE}/api/1/nomenclature",
+                              headers={"Authorization": f"Bearer {token}"},
+                              json={"organizationId": organization_id})
+        r.raise_for_status()
+        return r.json()
+
+
+def settlement_payment_type(payments: list[dict]) -> dict:
+    """Тип оплаты заказа для экранов: чем он реально рассчитывается.
+
+    НЕ `payments[0]`: у сплита первой часто идёт бонусная часть («БАЛЛЫ»,
+    `isProcessedExternally`) — на карточке сборщика и в аппе курьера писалось
+    «Оплата: БАЛЛЫ» вместо онлайна, и заказ №36 от 09.08.2026 этими баллами и
+    закрылся. Берём предоплату (её касса фискализирует при закрытии), иначе
+    самый крупный НЕ внешний платёж.
+    """
+    prelim = [p for p in payments if p.get("isPreliminary")]
+    internal = [p for p in payments if not p.get("isProcessedExternally")]
+    pool = prelim or internal or payments
+    if not pool:
+        return {}
+    return max(pool, key=lambda p: p.get("sum") or 0).get("paymentType") or {}
+
+
+def _parse_iiko_local_to_utc(s, offset_hours: int) -> datetime | None:
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(str(s).strip(), fmt) - timedelta(hours=offset_hours)
+        except ValueError:
+            continue
+    return None
+
+
+def _lifecycle_ts(o: dict, *keys: str) -> datetime | None:
+    """Первый непустой тайм-штамп из набора кандидатов-ключей, iiko-local -> UTC.
+
+    Имена полей жизненного цикла различаются между версиями Transport API, поэтому
+    перебираем кандидаты и берём первый, который распарсился."""
+    for k in keys:
+        ts = _parse_iiko_local_to_utc(o.get(k), settings.iiko_tz_offset_hours)
+        if ts is not None:
+            return ts
+    return None
+
+
+# ── Заказы зала через Cloud (active pull по столам) ──────────────────────────
+# Заказы зала, созданные на кассе iikoFront, по умолчанию НЕ лежат в iiko Cloud
+# (отсюда «ненадёжность» вебхука). Поэтому тянем их активно:
+#   1) order/init_by_table — проталкивает заказы столов из терминала в Cloud,
+#   2) order/by_table     — забирает их.
+# terminalGroupId и tableIds добираем через terminal_groups + restaurant_sections.
+
+def _parse_terminal_group_ids(resp: dict) -> list[str]:
+    """ID терминальных групп (касс) из ответа /api/1/terminal_groups."""
+    ids: list[str] = []
+    for tg in (resp.get("terminalGroups") or []):
+        for item in (tg.get("items") or []):
+            if item.get("id"):
+                ids.append(str(item["id"]))
+    return ids
+
+
+def _parse_table_ids(resp: dict) -> list[str]:
+    """ID столов из ответа /api/1/reserve/available_restaurant_sections."""
+    ids: list[str] = []
+    for sec in (resp.get("restaurantSections") or []):
+        for t in (sec.get("tables") or []):
+            if t.get("id"):
+                ids.append(str(t["id"]))
+    return ids
+
+
+async def fetch_terminal_groups(organization_id: str) -> list[str]:
+    """Терминальные группы (кассы) филиала — нужны для init_by_table."""
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{BASE}/api/1/terminal_groups",
+                              headers={"Authorization": f"Bearer {token}"},
+                              json={"organizationIds": [organization_id]})
+        r.raise_for_status()
+        return _parse_terminal_group_ids(r.json())
+
+
+async def fetch_sections(terminal_group_ids: list[str]) -> list[str]:
+    """Столы залов по терминальным группам (tableIds для by_table/init_by_table)."""
+    if not terminal_group_ids:
+        return []
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"{BASE}/api/1/reserve/available_restaurant_sections",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"terminalGroupIds": terminal_group_ids, "returnSchema": False})
+        r.raise_for_status()
+        return _parse_table_ids(r.json())
+
+
+async def order_init_by_table(organization_id: str, terminal_group_id: str,
+                              table_ids: list[str]) -> dict:
+    """Проталкивает заказы указанных столов из терминала iikoFront в Cloud."""
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{BASE}/api/1/order/init_by_table",
+                              headers={"Authorization": f"Bearer {token}"},
+                              json={"organizationId": organization_id,
+                                    "terminalGroupId": terminal_group_id,
+                                    "tableIds": table_ids})
+        r.raise_for_status()
+        return r.json() if r.text.strip() else {}
+
+
+async def order_by_table(organization_ids: list[str], table_ids: list[str],
+                         statuses: list[str] | None = None) -> list[dict]:
+    """Забирает заказы зала по столам. Возвращает список обёрток {id, order, ...}."""
+    token = await get_token()
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{BASE}/api/1/order/by_table",
+                              headers={"Authorization": f"Bearer {token}"},
+                              json={"organizationIds": organization_ids,
+                                    "tableIds": table_ids,
+                                    "statuses": statuses or ["New", "Bill"]})
+        r.raise_for_status()
+        return r.json().get("orders", []) or []
+
+
+def _modifiers(item: dict) -> list[dict]:
+    """Состав блюда из модификаторов заказа.
+
+    У сетов iiko кладёт сюда роллы: «-Филадельфия жареная 4 шт». Ведущий дефис
+    — его пометка вложенности, на экране он лишний.
+    """
+    out = []
+    for m in (item.get("modifiers") or []):
+        name = ((m.get("product") or {}).get("name") or "").strip().lstrip("-").strip()
+        if not name:
+            continue
+        out.append({"name": name, "amount": float(m.get("amount") or 1)})
+    return out
+
+
+def _is_placeholder(value: str) -> bool:
+    """«----------», «0», «-», пусто — заглушка вместо адреса, а не адрес."""
+    stripped = (value or "").strip(" -–—_.")
+    return not stripped or stripped == "0"
+
+
+def _coordinates(dp: dict) -> dict:
+    """Координаты точки, но (0, 0) — это «координат нет», а не Атлантика.
+
+    Заказы с сайта приходят с нулями; по ним кнопка «Маршрут» открывала 2ГИС
+    в океане, поэтому такие координаты выбрасываем — курьер поедет по адресу.
+    """
+    coords = dp.get("coordinates") or {}
+    lat, lon = coords.get("latitude"), coords.get("longitude")
+    if not lat or not lon:  # None или 0.0
+        return {}
+    return coords
+
+
+def _format_address(dp: dict) -> str:
+    """Собирает читаемый адрес доставки из deliveryPoint.
+
+    iiko Cloud кладёт адрес по частям (улица, дом, квартира, подъезд, этаж),
+    а раньше мы брали только название улицы — курьер видел «Абая» без дома.
+    Склеиваем всё, что есть, в одну строку.
+
+    Заказы с сайта (sourceKey=WEB) приходят иначе: улица «----------», дом «0»,
+    а настоящий адрес одной строкой в `line1` («г. Астана, ул. Туркестан 8,
+    кв 155»). Курьер видел мусор вида «----------, 0» — жалоба 09.08.2026.
+    Поэтому: если улица/дом заглушки, берём line1.
+    """
+    addr = (dp.get("address") or {})
+    street = (addr.get("street") or {}).get("name") or ""
+    house = addr.get("house") or ""
+    building = addr.get("building") or ""
+    line1 = (addr.get("line1") or "").strip()
+
+    if _is_placeholder(street) and _is_placeholder(house) and line1:
+        head = line1
+        building = ""
+    else:
+        if _is_placeholder(street) and line1:
+            street = line1
+        # Первая часть: «Улица, дом[ к.корпус]».
+        head_parts = [p for p in (street, house) if p and not _is_placeholder(p)]
+        head = ", ".join(head_parts)
+    if building:
+        head = f"{head} к.{building}" if head else f"к.{building}"
+
+    # Уточнения: квартира / подъезд / этаж — добавляем подписи, чтобы было понятно.
+    extras = []
+    if addr.get("flat"):
+        extras.append(f"кв. {addr['flat']}")
+    if addr.get("entrance"):
+        extras.append(f"подъезд {addr['entrance']}")
+    if addr.get("floor"):
+        extras.append(f"этаж {addr['floor']}")
+    if addr.get("doorphone"):
+        extras.append(f"домофон {addr['doorphone']}")
+
+    parts = [p for p in (head, *extras) if p]
+    address = ", ".join(parts)
+
+    # Комментарий курьеру («во дворе», «не звонить») — отдельной припиской.
+    # iiko присылает и пустые метки вида «Примеч. к адресу:» — текста после
+    # двоеточия нет, курьеру такой хвост ничего не даёт, только мусорит адрес.
+    comment = (dp.get("comment") or "").strip()
+    if comment.endswith(":"):
+        comment = ""
+    if comment:
+        address = f"{address} ({comment})" if address else comment
+    return address
+
+
+def normalize_full_order(wrapper: dict, organization_id: str) -> NormalizedOrder:
+    import logging
+    o = wrapper.get("order") or {}
+    cust_obj = o.get("customer") or {}
+    # Полное имя клиента: имя + фамилия (что есть).
+    customer = " ".join(
+        p for p in [(cust_obj.get("name") or "").strip(),
+                    (cust_obj.get("surname") or "").strip()] if p)
+    # Телефон: на уровне заказа, иначе у клиента. Берём первый непустой.
+    phone = (o.get("phone") or cust_obj.get("phone") or "").strip()
+    dp = o.get("deliveryPoint") or {}
+    address = _format_address(dp)
+    coords = _coordinates(dp)
+    # ДИАГНОСТИКА: смотрим сырую структуру адреса/телефона от iiko, чтобы
+    # прицельно чинить «неполный адрес / неверный телефон» у курьера.
+    logging.getLogger("saya.ingest").info(
+        "delivery raw: number=%s phone=%r customer_keys=%s dp_addr=%r dp_keys=%s",
+        o.get("number"), phone, list(cust_obj.keys()),
+        (dp.get("address") or {}), list(dp.keys()))
+    items: list[WebhookItem] = []
+    for it in o.get("items", []) or []:
+        product = it.get("product") or {}
+        if not product.get("id"):
+            continue
+        combo = it.get("comboInformation") or {}
+        cat = product.get("category") or {}
+        items.append(WebhookItem(
+            product_id=str(product["id"]),
+            category_id=(str(cat.get("id")) if cat.get("id") else None),
+            category_name=(cat.get("name") or "").strip(),
+            name=product.get("name", ""),
+            amount=float(it.get("amount", 1) or 1),
+            combo_id=(str(combo.get("comboId")) if combo.get("comboId") else None),
+            comment=(it.get("comment") or "").strip(),
+            modifiers=_modifiers(it),
+        ))
+    pays = o.get("payments") or []
+    pt = settlement_payment_type(pays)
+    complete_before = _parse_iiko_local_to_utc(
+        o.get("completeBefore"), settings.iiko_tz_offset_hours)
+    # Тайм-штампы жизненного цикла. Имена полей зависят от версии Transport API,
+    # поэтому читаем защитно (несколько кандидатов) и логируем сырые значения,
+    # чтобы свериться на реальном заказе.
+    when_created = _lifecycle_ts(o, "whenCreated", "createdAt")
+    when_cooking = _lifecycle_ts(o, "whenCookingCompleted", "cookingCompleteTime")
+    when_sended = _lifecycle_ts(o, "whenSended", "whenSent", "whenSendCompleted")
+    when_delivered = _lifecycle_ts(o, "whenDelivered", "actualDeliveryTime",
+                                   "whenReceivedByClient")
+    logging.getLogger("saya.ingest").info(
+        "delivery lifecycle: number=%s status=%s whenCreated=%r whenCookingCompleted=%r "
+        "whenSended=%r whenDelivered=%r",
+        o.get("number"), o.get("status"), o.get("whenCreated"),
+        o.get("whenCookingCompleted"), o.get("whenSended"), o.get("whenDelivered"))
+    courier = ((o.get("courierInfo") or {}).get("courier") or {})
+    return NormalizedOrder(
+        iiko_order_id=str(wrapper.get("id", "")),
+        org_id=organization_id,
+        number=str(o.get("number") or ""),
+        status=str(o.get("status") or ""),
+        customer=customer,
+        phone=phone,
+        address=address,
+        lat=coords.get("latitude"),
+        lon=coords.get("longitude"),
+        total=o.get("sum"),
+        service_type=(o.get("orderType") or {}).get("orderServiceType"),
+        comment=(o.get("comment") or "").strip(),
+        payment_type_id=(str(pt["id"]) if pt.get("id") else None),
+        payment_type_kind=pt.get("kind"),
+        payment_type_name=(pt.get("name") or None),
+        courier_iiko_id=(str(courier["id"]) if courier.get("id") else None),
+        courier_name=((courier.get("name") or "").strip() or None),
+        complete_before=complete_before,
+        when_created=when_created,
+        when_cooking_completed=when_cooking,
+        when_sended=when_sended,
+        when_delivered=when_delivered,
+        items=items,
+    )
+
+
+def normalize_table_order(event_or_wrapper: dict, organization_id: str) -> NormalizedOrder:
+    """Нормализует TableOrderUpdate (зал/вынос) в NormalizedOrder.
+
+    Форма payload до конца не задокументирована, поэтому работаем максимально
+    защитно. Принимаем либо «сырое» событие (тогда данные в
+    eventInfo.order, а id — в eventInfo.id), либо уже распакованный wrapper
+    вида {id, order}. Для зала адрес/координаты не нужны.
+
+    Логика извлечения позиций повторяет normalize_full_order: берём product
+    {id, name, category}, amount и combo. Тип обслуживания
+    (orderType.orderServiceType) определяет зал/вынос; при отсутствии — "DineIn".
+    """
+    src = event_or_wrapper or {}
+    # Если это сырое событие — спускаемся в eventInfo.
+    info = src.get("eventInfo")
+    if isinstance(info, dict):
+        wrapper = info
+    else:
+        wrapper = src
+
+    o = wrapper.get("order") or {}
+
+    items: list[WebhookItem] = []
+    for it in (o.get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        product = it.get("product") or {}
+        if not product.get("id"):
+            continue
+        combo = it.get("comboInformation") or {}
+        category = product.get("category") or {}
+        items.append(WebhookItem(
+            product_id=str(product["id"]),
+            category_id=(str(category.get("id")) if category.get("id") else None),
+            category_name=(category.get("name") or "").strip(),
+            name=product.get("name", "") or "",
+            amount=float(it.get("amount", 1) or 1),
+            combo_id=(str(combo.get("comboId")) if combo.get("comboId") else None),
+            comment=(it.get("comment") or "").strip(),
+            modifiers=_modifiers(it),
+        ))
+
+    # iiko_order_id: eventInfo.id -> order.id -> order.number (что есть первым).
+    iiko_order_id = wrapper.get("id") or o.get("id") or o.get("number") or ""
+
+    customer = (o.get("customer") or {}).get("name", "") or ""
+    service_type = (o.get("orderType") or {}).get("orderServiceType") or "DineIn"
+
+    pays = o.get("payments") or []
+    pt = settlement_payment_type(pays)
+    complete_before = _parse_iiko_local_to_utc(
+        o.get("completeBefore"), settings.iiko_tz_offset_hours)
+    return NormalizedOrder(
+        iiko_order_id=str(iiko_order_id),
+        org_id=organization_id,
+        number=str(o.get("number") or ""),
+        status=str(o.get("status") or ""),
+        customer=customer,
+        phone=o.get("phone", "") or "",
+        address="",
+        lat=None,
+        lon=None,
+        total=o.get("sum"),
+        service_type=service_type,
+        comment=(o.get("comment") or "").strip(),
+        payment_type_id=(str(pt["id"]) if pt.get("id") else None),
+        payment_type_kind=pt.get("kind"),
+        payment_type_name=(pt.get("name") or None),
+        complete_before=complete_before,
+        items=items,
+    )
+
+
+def build_webhooks_filter() -> dict:
+    """Фильтр подписки на вебхуки: доставка + зал/вынос/самовывоз.
+
+    Вынесено отдельно, чтобы покрыть тестом наличие обоих фильтров — без
+    tableOrderFilter iiko не присылает зал/вынос и они не видны на планшете.
+    """
+    return {
+        "deliveryOrderFilter": {
+            "orderStatuses": DELIVERY_ORDER_STATUSES,
+            "itemStatuses": ITEM_STATUSES,
+            "errors": True,
+        },
+        "tableOrderFilter": {
+            "orderStatuses": TABLE_ORDER_STATUSES,
+            "itemStatuses": ITEM_STATUSES,
+            "errors": True,
+        },
+    }
+
+
+async def update_webhook_settings(organization_id: str, web_hooks_uri: str,
+                                  auth_token: str | None = None,
+                                  token: str | None = None) -> dict:
+    token = token or await get_token()
+    body = {
+        "organizationId": organization_id,
+        "webHooksUri": web_hooks_uri,
+        "webHooksFilter": build_webhooks_filter(),
+    }
+    if auth_token:
+        body["authToken"] = auth_token
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{BASE}/api/1/webhooks/update_settings",
+                              headers={"Authorization": f"Bearer {token}"}, json=body)
+        r.raise_for_status()
+        return r.json() if r.text.strip() else {"ok": True}
+
+
+def _public_base_url() -> str:
+    """Публичный адрес сервиса для приёма вебхуков.
+
+    На Render автоматически доступен RENDER_EXTERNAL_URL; локально/иначе можно
+    задать PUBLIC_BASE_URL. Без него авто-регистрация пропускается.
+    """
+    import os
+    return (os.environ.get("PUBLIC_BASE_URL")
+            or os.environ.get("RENDER_EXTERNAL_URL")
+            or "").rstrip("/")
+
+
+async def _register_one(org_id: str, uri: str, token: str) -> str | None:
+    """Подписывает одну орг РОВНО одним вызовом update_settings.
+    Без retry-бурстов: iiko жёстко рейт-лимитит этот endpoint, а повторы в
+    пределах короткого окна только продлевают кулдаун 429. Возвращает None при
+    успехе или короткое описание ошибки."""
+    try:
+        await update_webhook_settings(org_id, uri, token=token)
+        return None
+    except httpx.HTTPStatusError as e:
+        return f"HTTP {e.response.status_code}: {e.response.text[:120]}"
+    except Exception as e:  # noqa: BLE001
+        return str(e)[:120]
+
+
+async def register_all_webhooks() -> dict:
+    """Пере-подписывает iiko на вебхуки (доставка + зал/вынос) для всех орг.
+
+    Идемпотентно: update_settings перезаписывает фильтры. Вызывается на старте
+    сервиса, чтобы новый tableOrderFilter (зал/вынос/самовывоз) применился без
+    ручных действий. iiko рейт-лимитит update_settings (429), поэтому между
+    вызовами делаем паузу и ретраим с backoff. Один access_token на все вызовы.
+    Ошибки по орг возвращаем в ответе — иначе их не видно (app-логи на Render
+    не выводятся).
+    """
+    import asyncio
+    import logging
+    log = logging.getLogger("saya.webhooks")
+
+    base = _public_base_url()
+    if not (base and settings.cloud_api_login and settings.webhook_secret):
+        return {"registered": 0, "skipped": True,
+                "reason": f"base={bool(base)} login={bool(settings.cloud_api_login)} "
+                          f"secret={bool(settings.webhook_secret)}"}
+
+    uri = f"{base}/webhooks/iiko/cloud?key={settings.webhook_secret}"
+    token = await get_token()
+    orgs = await fetch_organizations()
+
+    # Allowlist: подписываем только нужные филиалы (WEBHOOK_ORG_IDS через запятую).
+    # Это и убирает 429 (iiko рейт-лимитит update_settings), и фокусирует на
+    # рабочем филиале. Пусто -> подписываем все орг.
+    import os
+    allow = {x.strip() for x in (os.environ.get("WEBHOOK_ORG_IDS") or "").split(",") if x.strip()}
+    if allow:
+        orgs = [o for o in orgs if o.get("id") in allow]
+
+    ok = 0
+    errors: dict[str, str] = {}
+    for i, org in enumerate(orgs):
+        org_id = org.get("id")
+        if not org_id:
+            continue
+        if i:
+            await asyncio.sleep(1.0)  # троттлинг, чтобы не ловить 429
+        err = await _register_one(org_id, uri, token)
+        if err is None:
+            ok += 1
+        else:
+            errors[org.get("name") or org_id] = err
+    log.info("webhook auto-register: %s/%s orgs", ok, len(orgs))
+    result: dict = {"registered": ok, "total": len(orgs)}
+    if errors:
+        result["errors"] = errors
+    return result

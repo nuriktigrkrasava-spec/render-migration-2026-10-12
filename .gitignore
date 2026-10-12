@@ -1,0 +1,16 @@
+# Never publish operational data or credentials
+.env
+.env.local
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.p12
+*.pem
+*.key
+*.keystore
+*.jks
+node_modules/
+__pycache__/
+.venv/
+private-transfer/

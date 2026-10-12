@@ -1,0 +1,1 @@
+var e=new Intl.NumberFormat(`ru-RU`);function t(t){return t==null||Number.isNaN(t)?`—`:`${e.format(Math.round(t))} ₸`}function n(t){return t==null||Number.isNaN(t)?`—`:e.format(t)}export{t as n,n as t};

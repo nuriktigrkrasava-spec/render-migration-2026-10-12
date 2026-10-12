@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ориентир</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=&apos;http://www.w3.org/2000/svg&apos; viewBox=&apos;0 0 32 32&apos;%3E%3Crect width=&apos;32&apos; height=&apos;32&apos; rx=&apos;7&apos; fill=&apos;%23070a11&apos;/%3E%3Crect x=&apos;7&apos; y=&apos;16&apos; width=&apos;5&apos; height=&apos;9&apos; rx=&apos;1.5&apos; fill=&apos;%234f7cff&apos;/%3E%3Crect x=&apos;13.5&apos; y=&apos;9&apos; width=&apos;5&apos; height=&apos;16&apos; rx=&apos;1.5&apos; fill=&apos;%23f2b134&apos;/%3E%3Crect x=&apos;20&apos; y=&apos;13&apos; width=&apos;5&apos; height=&apos;12&apos; rx=&apos;1.5&apos; fill=&apos;%2325c2a0&apos;/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<script>
+  /* тему ставим до первой отрисовки, иначе мигнёт светлым */
+  try {
+    var saved = localStorage.getItem('orientir-theme');
+    if (saved) document.documentElement.dataset.theme = saved;
+  } catch (e) { /* браузер запретил хранилище */ }
+</script>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+<div id="labels" aria-hidden="true"></div>
+
+<header id="bar">
+  <div id="brand">Ориентир</div>
+  <div id="soon" aria-live="polite"></div>
+  <div id="tools">
+    <button id="btn-report" type="button" class="quiet">Итоги</button>
+    <button id="btn-theme" type="button" class="quiet">Ночь</button>
+    <button id="btn-calendar" type="button" class="quiet">Календарь</button>
+    <button id="btn-save" type="button" class="quiet">Сохранить копию</button>
+    <button id="btn-load" type="button" class="quiet">Загрузить</button>
+    <input id="file" type="file" accept="application/json,.json" hidden>
+  </div>
+</header>
+
+<nav id="docks" aria-label="Сферы"></nav>
+
+<aside id="panel" hidden>
+  <button id="panel-close" type="button" aria-label="Закрыть">✕</button>
+  <h2 id="panel-title"></h2>
+  <p id="panel-note"></p>
+  <div id="panel-body"></div>
+</aside>
+
+<section id="calendar" aria-label="Календарь">
+  <div class="cal-head">
+    <button id="cal-prev" type="button" class="quiet" aria-label="Прошлый месяц">‹</button>
+    <span id="cal-title"></span>
+    <button id="cal-next" type="button" class="quiet" aria-label="Следующий месяц">›</button>
+  </div>
+  <div id="cal-grid"></div>
+</section>
+
+<div id="notice" hidden></div>
+
+<noscript>Страница работает на JavaScript. Включите его в браузере.</noscript>
+
+<script src="js/dom.js"></script>
+<script src="js/model.js"></script>
+<script src="js/money.js"></script>
+<script src="js/gym.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/store.js"></script>
+<script src="js/ui-tasks.js"></script>
+<script src="js/ui-gym.js"></script>
+<script src="js/ui-money.js"></script>
+<script src="js/ui-calendar.js"></script>
+<script src="js/ui-report.js"></script>
+<script src="js/ui-day.js"></script>
+<script src="js/ui.js"></script>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module">
+  import { start } from './js/city.js';
+  start();
+</script>
+
+</body>
+</html>

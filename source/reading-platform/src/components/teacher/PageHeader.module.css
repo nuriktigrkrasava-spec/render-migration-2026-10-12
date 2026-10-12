@@ -1,0 +1,36 @@
+.header {
+  margin-bottom: 30px;
+  animation: t-rise 0.4s ease both;
+}
+
+.back {
+  margin-bottom: 14px;
+}
+
+.row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.titleBlock {
+  min-width: 0;
+}
+
+.title {
+  font-size: 32px;
+  margin-top: 8px;
+}
+
+.description {
+  margin-top: 8px;
+  max-width: 56ch;
+  color: var(--ink-muted);
+  font-size: 14.5px;
+}
+
+.action {
+  flex: none;
+}

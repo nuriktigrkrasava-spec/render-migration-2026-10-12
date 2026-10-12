@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/* Дизайн-язык «Бумага»: светлый финансовый отчёт.
+   pos/warn/neg — это же светофор 🟢🟡🔴 из «01 — Концепция». */
+@theme {
+  --color-paper:  #faf7f2;
+  --color-paper2: #f2ede4;
+  --color-ink:    #17171a;
+  --color-ink2:   #57544c;
+  --color-muted:  #8b8574;
+  --color-rule:   #ded8cc;
+  --color-neg:    #c8562f;
+  --color-pos:    #2f7a52;
+  --color-warn:   #b8860b;
+
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  --font-sans:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-mono:    "SFMono-Regular", ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Цифры в таблицах: моноширинные, колонки выстраиваются столбиком */
+@utility tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Подпись капсом — повторяется на каждом экране */
+@utility eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #d6cec0; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #c4bbaa; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in { animation: fade 0.3s ease both; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+}

@@ -1,0 +1,169 @@
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 28px;
+  align-items: start;
+}
+
+.parts {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.count {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.part {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 10px 12px;
+  animation: t-rise 0.4s ease both;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.order {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--clay);
+  background: var(--clay-wash);
+}
+
+.rowMain {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.partTitle {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.rowMain .partTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qCount {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.rowTools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.moveForm {
+  display: inline-flex;
+}
+
+.details {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+}
+
+.deleteForm {
+  justify-self: start;
+}
+
+.editForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.editActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* aside */
+.aside {
+  position: sticky;
+  top: 28px;
+}
+
+.formCard {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 22px;
+}
+
+.formTitle {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.formHint {
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-bottom: 18px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+@media (max-width: 920px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .aside {
+    position: static;
+    order: -1;
+  }
+}

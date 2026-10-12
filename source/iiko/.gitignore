@@ -1,0 +1,51 @@
+# Secrets — НИКОГДА не коммитить
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Claude / local tooling
+.claude/
+
+# Logs
+*.log
+
+# визуальный компаньон brainstorming
+.superpowers/
+
+# scratch/preview артефакты (Этап 1)
+/*.png
+/scratch_*.log
+/app-build.html
+.playwright-mcp/
+
+# Загруженные фото чек-листов — данные филиалов, не код
+checklists/
+
+# Состояние инструментов и вендоринг: в репозитории им делать нечего
+.claude-flow/
+vendor/

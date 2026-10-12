@@ -1,0 +1,214 @@
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 22px;
+}
+
+.title {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.hint {
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-bottom: 18px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.typeToggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.typeOption {
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  background: var(--paper-raised);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.typeOption input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.typeOptionActive {
+  border-color: var(--clay-soft);
+  background: var(--clay-wash);
+  box-shadow: inset 0 0 0 1px var(--clay-soft);
+}
+
+.typeName {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.typeDesc {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 12px;
+  align-items: end;
+}
+
+.optionsBlock {
+  animation: t-rise 0.25s ease both;
+}
+
+.optionsHint {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 6px;
+}
+
+.optionList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.optionRowCorrect {
+  border-color: var(--sage);
+  background: var(--sage-wash);
+}
+
+.optionBadge {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--clay);
+  background: var(--clay-wash);
+}
+
+.optionRowCorrect .optionBadge {
+  color: #fff;
+  background: var(--sage);
+}
+
+.optionInput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.optionInput:focus {
+  outline: none;
+  border-color: var(--clay-soft);
+  box-shadow: 0 0 0 3px var(--clay-wash);
+}
+
+.correctToggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.correctToggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.correctDot {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid var(--line-strong);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.correctToggleOn {
+  color: var(--sage);
+}
+
+.correctToggleOn .correctDot {
+  border-color: var(--sage);
+  background: var(--sage);
+  box-shadow: inset 0 0 0 2px #fff;
+}
+
+.removeOption {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.removeOption:hover {
+  background: var(--clay-wash);
+  color: var(--clay);
+}
+
+.addOption {
+  margin-top: 8px;
+  align-self: flex-start;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.addOption:hover {
+  border-color: var(--clay-soft);
+  color: var(--clay);
+}

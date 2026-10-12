@@ -1,0 +1,1155 @@
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, PieChart, Pie, Cell, Legend,
+} from "recharts";
+import { Link } from "react-router-dom";
+import { api } from "../lib/api";
+import { getOrgId, getSession } from "../lib/auth.js";
+import { zoneColor, zoneIcon, zoneLabel } from "../lib/zones.js";
+import "../admin.css";
+
+function presetRange(days) {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(to.getDate() - (days - 1));
+  // Локальная дата (Y-M-D по местному времени, НЕ UTC): «Сегодня» должно означать
+  // текущий местный день, а не UTC-день — иначе граница съезжает на смещение часового пояса.
+  const iso = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(from), to: iso(to) };
+}
+
+function sec2min(s) {
+  return s != null ? Math.round(s / 60) : "—";
+}
+
+function fmtSeconds(seconds) {
+  if (seconds == null) return "—";
+  const total = Math.max(0, Math.round(seconds));
+  const mm = Math.floor(total / 60);
+  const ss = total % 60;
+  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
+// Время из OLAP приходит строкой локального времени филиала ("2026-08-10T22:56:46.572").
+// Дата вынесена в отдельную колонку, поэтому здесь только часы и минуты —
+// секунды и миллисекунды в таблице лишние.
+function fmtOlapTime(s) {
+  if (!s) return "—";
+  const m = /^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/.exec(s);
+  return m ? `${m[1]}:${m[2]}` : s;
+}
+
+// "2026-08-18T23:19:41.801" -> "18.08"
+function fmtOlapDate(s) {
+  if (!s) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  return m ? `${m[3]}.${m[2]}` : s;
+}
+
+// "2026-08-11" -> "11.08"
+function fmtDay(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${m[3]}.${m[2]}` : iso;
+}
+
+// Причина опоздания: какой этап сильнее вышел за свою обычную длительность.
+const REASON_LABEL = {
+  kitchen: "Долгая готовка", pickup: "Ждали курьера",
+  delivery: "Долго везли", unknown: "Нет наших отметок",
+};
+const REASON_BG = {
+  kitchen: "#fed7aa", pickup: "#fde68a", delivery: "#bfdbfe", unknown: "#e5e7eb",
+};
+
+const WEEKDAY_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+// Рабочий день филиала: с 8 утра и за полночь — смены заканчиваются в первом
+// часу (на проде видели закрытия в 00:05 и доставки в 23:21). Часа 24 не
+// существует: раньше он был последним столбцом и всегда пустовал, а часы 0-1,
+// в которые люди реально стоят, не показывались вовсе.
+const STAFF_HOURS = [...Array.from({ length: 16 }, (_, i) => i + 8), 0, 1];
+
+const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
+
+// Сравнение текущего значения с предыдущим периодом. lowerIsBetter — для времени
+// доставки (меньше = лучше), тогда снижение красим зелёным. Возвращает null, если
+// сравнивать не с чем (нет прошлого периода).
+function calcDelta(cur, prev, lowerIsBetter = false) {
+  if (cur == null || prev == null) return null;          // реально нет данных за пред. период
+  if (prev === 0) {
+    if (cur === 0) return { pct: 0, up: null, good: null };       // было 0 → осталось 0
+    return { pct: null, up: true, good: !lowerIsBetter };         // было 0 → появилось (рост без %)
+  }
+  const pct = Math.round(((cur - prev) / prev) * 100);
+  if (pct === 0) return { pct: 0, up: null, good: null };
+  const up = pct > 0;
+  return { pct: Math.abs(pct), up, good: lowerIsBetter ? !up : up };
+}
+
+// Подпись-источник под показателем: откуда взята цифра (какая отметка/поле iiko
+// и по какой формуле посчитано). Требование заказчика: каждый показатель
+// подписан прямо в админке.
+function Src({ children }) {
+  return (
+    <p style={{ fontSize: 11.5, lineHeight: 1.35, color: "#94a3b8", margin: "6px 0 0" }}>
+      ⓘ {children}
+    </p>
+  );
+}
+
+function Delta({ d }) {
+  if (!d) return <span className="stat-card__delta stat-card__delta--none">нет прошлого периода</span>;
+  if (d.up === null) return <span className="stat-card__delta">без изменений</span>;
+  const cls = d.good ? " stat-card__delta--up" : " stat-card__delta--down";
+  return (
+    <span className={"stat-card__delta" + cls}>
+      {d.up ? "↑" : "↓"} {d.pct == null ? "новое" : `${d.pct}%`} <small>к пред. периоду</small>
+    </span>
+  );
+}
+
+// ── Нагрузка по зонам/часам (heatmap) ───────────────────────────────────────
+const KZONE_LABEL = { pizza: "Пицца", rolls: "Япония", hot: "Горячее", other: "Другое" };
+
+// Этапы «пути заказа» (от кухни до клиента). iiko_close — внутреннее, не показываем.
+const STAGE_META = {
+  cooking: { label: "Готовка", color: "#e8552d" },
+  assembly: { label: "Сборка", color: "#0ea5e9" },
+  pickup_wait: { label: "Ожидание", color: "#f59e0b" },
+  delivery: { label: "Доставка", color: "#7c3aed" },
+};
+// Только два этапа, за которые отвечают живые люди: кухня и курьер. Сборка и
+// ожидание курьера убраны — они мерялись отметками, которые ставят не всегда, и
+// в полосе создавали видимость точности там, где её нет.
+const JOURNEY_KEYS = ["cooking", "delivery"];
+
+function hexToRgb(hex) {
+  const h = (hex || "#2563eb").replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+// Фон ячейки = цвет зоны с альфой, растущей по нагрузке; текст белеет на насыщенном.
+function heatStyle(count, max, hex) {
+  if (!count) return { background: "rgba(15,23,42,0.025)" };
+  const t = Math.sqrt(count / max); // sqrt вытягивает слабую нагрузку из невидимости
+  const a = 0.12 + t * 0.82;
+  const { r, g, b } = hexToRgb(hex);
+  return { background: `rgba(${r},${g},${b},${a.toFixed(3)})`, color: a > 0.58 ? "#fff" : "#0f172a" };
+}
+
+// Окно часов: от первого до последнего часа С ДАННЫМИ. Пустые будущие и ночные
+// часы не рисуем — поэтому в отчёте за сегодня не видно ещё не наступивших часов.
+function activeHourWindow(zones, cells, keyOf) {
+  let lo = null, hi = null;
+  for (const z of zones) {
+    const row = cells[keyOf(z)] || {};
+    for (const h of Object.keys(row)) {
+      if (!row[h]?.count) continue;
+      const n = Number(h);
+      lo = lo == null ? n : Math.min(lo, n);
+      hi = hi == null ? n : Math.max(hi, n);
+    }
+  }
+  if (lo == null) return [];
+  return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+}
+
+const keyOfZone = (z) => (typeof z === "string" ? z : z.id == null ? "none" : String(z.id));
+
+function HoursHeatTable({ title, data, rowLabel, rowColor, rowIcon, note }) {
+  if (!data) return null;
+  const { zones, cells, totals_by_zone } = data;
+  const hours = activeHourWindow(zones, cells, keyOfZone);
+  const nowHour = new Date().getHours();
+
+  if (!hours.length) {
+    return (
+      <section className="card heatx-card">
+        <div className="heatx-head"><h2>{title}</h2></div>
+        <p className="heatx-empty">Пока нет данных за выбранный период.</p>
+      </section>
+    );
+  }
+
+  const max = Math.max(1, ...zones.flatMap((z) =>
+    hours.map((h) => cells[keyOfZone(z)]?.[h]?.count || 0)));
+
+  return (
+    <section className="card heatx-card">
+      <div className="heatx-head">
+        <h2>{title}</h2>
+        <span className="heatx-legend">объём&nbsp;·&nbsp;ср.&nbsp;мин</span>
+      </div>
+      <div className="heatx-scroll">
+        <table className="heatx">
+          <thead>
+            <tr>
+              <th className="heatx__corner" />
+              {hours.map((h) => (
+                <th key={h} className={"heatx__h" + (h === nowHour ? " heatx__h--now" : "")}>
+                  {String(h).padStart(2, "0")}
+                </th>
+              ))}
+              <th className="heatx__sum-h">Σ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {zones.map((z) => {
+              const k = keyOfZone(z);
+              const tot = totals_by_zone[k] || { count: 0, avg_sec: null };
+              const color = rowColor(z);
+              const row = cells[k] || {};
+              let peak = -1, peakV = 0;
+              for (const h of hours) {
+                const c = row[h]?.count || 0;
+                if (c > peakV) { peakV = c; peak = h; }
+              }
+              return (
+                <tr key={k}>
+                  <th className="heatx__zone" scope="row">
+                    <span className="heatx__zone-in">
+                      <span className="heatx__dot" style={{ background: color }} />
+                      {rowIcon ? <span className="heatx__icon">{rowIcon(z)}</span> : null}
+                      <span className="heatx__name">{rowLabel(z)}</span>
+                    </span>
+                  </th>
+                  {hours.map((h) => {
+                    const c = row[h];
+                    const cls = "heatx__cell" + (h === peak && peakV > 0 ? " heatx__cell--peak" : "");
+                    const hh = String(h).padStart(2, "0");
+                    return (
+                      <td key={h} className={cls} style={heatStyle(c?.count, max, color)}
+                          title={c ? `${hh}:00 — ${c.count} шт · ${sec2min(c.avg_sec)} мин` : `${hh}:00 — нет`}>
+                        {c ? (
+                          <><span className="heatx__n">{c.count}</span><span className="heatx__m">{sec2min(c.avg_sec)}</span></>
+                        ) : null}
+                      </td>
+                    );
+                  })}
+                  <td className="heatx__sum">
+                    <span className="heatx__n">{tot.count}</span>
+                    <span className="heatx__m">{sec2min(tot.avg_sec)}м</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {note && <Src>{note}</Src>}
+    </section>
+  );
+}
+
+const EVENT_TYPE_LABELS = {
+  item_accept: "Принял",
+  item_ready: "Готово",
+  item_check: "Проверил",
+  item_revert: "Возврат",
+  order_assemble: "Собрал",
+  take: "Забрал",
+  delivered: "Доставлен",
+  iiko_write: "Запись iiko",
+};
+
+const JOURNAL_TYPES = [
+  "item_accept", "item_ready", "item_check", "item_revert",
+  "order_assemble", "take", "delivered",
+];
+
+// ── Модальное окно тайм-лайна заказа ───────────────────────────────────────
+function TimelineModal({ orgId, orderId, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!orderId) return;
+    setLoading(true);
+    setError(null);
+    api
+      .orderTimeline(orgId, orderId)
+      .then(setData)
+      .catch((e) => setError(e.message || String(e)))
+      .finally(() => setLoading(false));
+  }, [orgId, orderId]);
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+        zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "#fff", borderRadius: 16, padding: 28, maxWidth: 680,
+          width: "100%", maxHeight: "90vh", overflowY: "auto",
+          boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>
+            Тайм-лайн заказа {data ? `#${data.order.number}` : ""}
+          </h2>
+          <button
+            onClick={onClose}
+            style={{ border: "none", background: "none", fontSize: 22, cursor: "pointer", color: "#6b7280" }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {loading && <p className="admin__state">Загрузка…</p>}
+        {error && <p className="admin__state admin__state--err">Ошибка: {error}</p>}
+
+        {data && (
+          <>
+            {/* Этапы */}
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Этапы</h3>
+            <table className="admin-table" style={{ marginBottom: 20 }}>
+              <thead>
+                <tr>
+                  <th>Этап</th>
+                  <th className="num">Минуты</th>
+                  <th>Бутылочное горло</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.stages.map((s) => (
+                  <tr key={s.key} style={s.bottleneck ? { background: "#fef9c3" } : {}}>
+                    <td>{s.label}</td>
+                    <td className="num">{s.seconds != null ? `${sec2min(s.seconds)} мин` : "—"}</td>
+                    <td style={{ color: s.bottleneck ? "#b45309" : "#9ca3af", fontWeight: s.bottleneck ? 600 : 400 }}>
+                      {s.bottleneck ? "да" : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* События */}
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: "#374151", marginBottom: 8 }}>События</h3>
+            <div style={{ borderLeft: "3px solid #e5e7eb", paddingLeft: 16 }}>
+              {data.events.map((ev, i) => (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                    {ev.at ? new Date(ev.at).toLocaleString("ru-RU") : ""}
+                  </div>
+                  <div style={{ fontWeight: 600, color: "#1f2937" }}>
+                    {EVENT_TYPE_LABELS[ev.type] || ev.type}
+                    {ev.actor_name ? <span style={{ fontWeight: 400, color: "#6b7280" }}> — {ev.actor_name}</span> : ""}
+                  </div>
+                  {ev.payload?.name && (
+                    <div style={{ fontSize: 13, color: "#6b7280" }}>{ev.payload.name}</div>
+                  )}
+                  {ev.payload?.item_name && (
+                    <div style={{ fontSize: 13, color: "#6b7280" }}>{ev.payload.item_name}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Основной экран ───────────────────────────────────────────────────────────
+export default function Analytics() {
+  const session = getSession();
+  const orgId = getOrgId();
+  const [range, setRange] = useState(presetRange(7));
+  // Какой пресет периода активен (1|7|30), либо null если выбран свой диапазон —
+  // нужно, чтобы подсветить нажатую кнопку.
+  const [preset, setPreset] = useState(7);
+  const applyPreset = (days) => { setPreset(days); setRange(presetRange(days)); };
+  const setCustomDate = (field) => (e) => { setPreset(null); setRange((r) => ({ ...r, [field]: e.target.value })); };
+
+  // Тик «Обновить»: меняется по кнопке и входит в зависимости всех загрузчиков,
+  // поэтому повторно перечитывает данные без перезагрузки страницы.
+  const [reloadTick, setReloadTick] = useState(0);
+  const refresh = () => setReloadTick((t) => t + 1);
+
+  // сводка ЗА ПЕРИОД (таблица сотрудников/зон) — из /admin/analytics
+  const [summary, setSummary] = useState(null);
+  // карточки за выбранный период + сравнение с предыдущим — из /admin/summary
+  const [periodSummary, setPeriodSummary] = useState(null);
+
+  // stageStats (уже был)
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState(null);
+
+  // kitchenZones
+  const [zones, setZones] = useState(null);
+  const [zonesLoading, setZonesLoading] = useState(false);
+  const [expandedZone, setExpandedZone] = useState(null);
+
+  // anomalies
+  const [anomalies, setAnomalies] = useState(null);
+  const [anomaliesLoading, setAnomaliesLoading] = useState(false);
+
+  // journal
+  const [journal, setJournal] = useState(null);
+  const [journalLoading, setJournalLoading] = useState(false);
+  const [jType, setJType] = useState("");
+  const [jActor, setJActor] = useState("");
+  const [jNumber, setJNumber] = useState("");
+
+  // drill-down timeline
+  const [timelineOrderId, setTimelineOrderId] = useState(null);
+
+  // zonal load heatmap (кухня). Спрос по районам вынесен в «Карту спроса».
+  const [zoneLoadData, setZoneLoadData] = useState(null);
+
+  // Смены: нагрузка против людей (OLAP + явки iiko)
+  const [staffing, setStaffing] = useState(null);
+  const [staffingLoading, setStaffingLoading] = useState(false);
+  const [staffingErr, setStaffingErr] = useState(null);
+  const [staffZone, setStaffZone] = useState("japan");
+
+  // Опоздания доставок (OLAP iiko)
+  const [late, setLate] = useState(null);
+  const [lateLoading, setLateLoading] = useState(false);
+  const [lateError, setLateError] = useState(null);
+  const [lateOpen, setLateOpen] = useState(false);
+
+  // ── загрузка сводки за период (таблица сотрудников/зон) ───────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    api.analytics(orgId, range.from, range.to).then(setSummary).catch(() => setSummary(null));
+  }, [orgId, range.from, range.to, reloadTick]);
+
+  // ── загрузка карточек за период + сравнение с предыдущим ─────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    api.summary(orgId, range.from, range.to)
+      .then(setPeriodSummary).catch(() => setPeriodSummary(null));
+  }, [orgId, range.from, range.to, reloadTick]);
+
+  // ── загрузка stageStats ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    setStatsLoading(true);
+    setStatsError(null);
+    api
+      .stageStats(orgId, range.from, range.to)
+      .then(setStats)
+      .catch((e) => { setStatsError(e.message || String(e)); setStats(null); })
+      .finally(() => setStatsLoading(false));
+  }, [orgId, range.from, range.to, reloadTick]);
+
+  // ── загрузка kitchenZones ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    setZonesLoading(true);
+    api
+      .kitchenZones(orgId, range.from, range.to)
+      .then(setZones)
+      .catch(() => setZones(null))
+      .finally(() => setZonesLoading(false));
+  }, [orgId, range.from, range.to, reloadTick]);
+
+  // ── загрузка anomalies ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    setAnomaliesLoading(true);
+    api
+      .anomalies(orgId)
+      .then(setAnomalies)
+      .catch(() => setAnomalies(null))
+      .finally(() => setAnomaliesLoading(false));
+  }, [orgId, reloadTick]);
+
+  // ── загрузка journal ────────────────────────────────────────────────────
+  const loadJournal = useCallback(() => {
+    if (!orgId) return;
+    setJournalLoading(true);
+    const params = {};
+    if (jType) params.type = jType;
+    if (jActor) params.actor = jActor;
+    if (jNumber) params.order_number = jNumber;
+    api
+      .journal(orgId, range.from, range.to, params)
+      .then(setJournal)
+      .catch(() => setJournal(null))
+      .finally(() => setJournalLoading(false));
+  }, [orgId, range.from, range.to, jType, jActor, jNumber, reloadTick]);
+
+  useEffect(() => { loadJournal(); }, [loadJournal]);
+
+  // ── загрузка нагрузки по зонам/районам ──────────────────────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    api.zoneLoad(orgId, range.from, range.to).then(setZoneLoadData).catch(() => setZoneLoadData(null));
+  }, [orgId, range.from, range.to, reloadTick]);
+
+  // ── загрузка смен: не зависит от выбранного периода, всегда 4 недели ────
+  useEffect(() => {
+    if (!orgId) return;
+    setStaffingLoading(true);
+    setStaffingErr(null);
+    api
+      .staffing(orgId, 4)
+      .then(setStaffing)
+      .catch((e) => { setStaffingErr(e.message || String(e)); setStaffing(null); })
+      .finally(() => setStaffingLoading(false));
+  }, [orgId, reloadTick]);
+
+  // ── загрузка опозданий доставок (OLAP iiko, ходит в RMS — медленно) ─────
+  useEffect(() => {
+    if (!orgId) return;
+    setLateLoading(true);
+    setLateError(null);
+    api
+      .lateDeliveries(orgId, range.from, range.to)
+      .then(setLate)
+      .catch((e) => { setLateError(e.message || String(e)); setLate(null); })
+      .finally(() => setLateLoading(false));
+  }, [orgId, range.from, range.to, reloadTick]);
+
+  // ── производные данные ──────────────────────────────────────────────────
+  const stageData = useMemo(
+    () =>
+      (stats?.stage_aggregates?.stages || []).map((s) => ({
+        label: s.label,
+        avg: sec2min(s.avg),
+        p95: sec2min(s.p95),
+      })),
+    [stats]
+  );
+
+  const bottleneckData = useMemo(
+    () =>
+      Object.entries(stats?.bottleneck_distribution || {})
+        .map(([key, value]) => ({ name: key, value }))
+        .filter((d) => d.value > 0),
+    [stats]
+  );
+
+  const slaRate = stats ? Math.round((stats.sla?.rate || 0) * 100) : null;
+
+  const pickupLag = stats?.pickup_lag || null;
+
+  // Полоса «путь заказа»: ВСЕ этапы (от кухни до клиента); этап без данных
+  // показываем бледным «—», чтобы доставка/ожидание были видны, даже если в
+  // выбранном периоде по ним ещё нет завершённых заказов.
+  const journey = useMemo(() => {
+    const byKey = Object.fromEntries(
+      (stats?.stage_aggregates?.stages || []).map((s) => [s.key, s]));
+    const segs = JOURNEY_KEYS.map((k) => ({
+      key: k, ...STAGE_META[k],
+      avg: byKey[k]?.avg || 0, p95: byKey[k]?.p95 || 0,
+      has: (byKey[k]?.avg || 0) > 0,
+    }));
+    const total = segs.reduce((sum, x) => sum + x.avg, 0);
+    const bd = stats?.bottleneck_distribution || {};
+    let neckKey = null, neckV = 0;
+    for (const k of JOURNEY_KEYS) if ((bd[k] || 0) > neckV) { neckV = bd[k]; neckKey = k; }
+    return { segs, total, hasAny: segs.some((s) => s.has),
+             neckKey, neckLabel: STAGE_META[neckKey]?.label, neckCount: neckV };
+  }, [stats]);
+
+  return (
+    <div className="admin">
+      <div className="admin__inner">
+        <Link to="/" className="admin__back">
+          ← На главную
+        </Link>
+
+        {/* Изоляция филиалов: без входа orgId падает на "demo" — честно предупреждаем,
+            что это НЕ данные филиала, чтобы демо-цифры не приняли за реальные. */}
+        {!session?.org_id && (
+          <p className="admin__state admin__state--err">
+            ⚠ Вы не вошли — показаны демо-данные (org «demo»), а не данные вашего
+            филиала. <Link to="/login">Войти по PIN</Link>
+          </p>
+        )}
+
+        <div className="analytics__head">
+          <h1 className="admin__title">
+            Аналитика
+            {session?.branch_name && (
+              <small className="admin__hint" style={{ marginLeft: 10 }}>
+                филиал: {session.branch_name}
+              </small>
+            )}
+          </h1>
+          <button className="analytics__refresh" onClick={refresh} disabled={statsLoading}>
+            <span className="analytics__refresh-ic">↻</span>
+            {statsLoading ? "Обновляю…" : "Обновить"}
+          </button>
+        </div>
+
+        {/* ── Сводные карточки (за выбранный период + сравнение) ── */}
+        {periodSummary && (
+          <div className="admin__cards">
+            <div className="stat-card">
+              <span className="stat-card__label">Заказов за период</span>
+              <span className="stat-card__value">{periodSummary.current.orders}</span>
+              <Delta d={calcDelta(periodSummary.current.orders, periodSummary.previous.orders)} />
+              <Src>Заказы филиала, созданные за период (время создания из iiko);
+                отменённые и удалённые не считаются.</Src>
+            </div>
+            <div className="stat-card">
+              <span className="stat-card__label">Доставлено за период</span>
+              <span className="stat-card__value">{periodSummary.current.delivered}</span>
+              <Delta d={calcDelta(periodSummary.current.delivered, periodSummary.previous.delivered)} />
+              <Src>Отметка курьера «Доставлен» либо заказ закрыт в iiko
+                (самовывоз / курьер не отметил).</Src>
+            </div>
+            <div className="stat-card">
+              <span className="stat-card__label">В работе <small>за период</small></span>
+              <span className="stat-card__value">{periodSummary.in_progress}</span>
+              <Delta d={calcDelta(periodSummary.in_progress,
+                                  periodSummary.previous.orders - periodSummary.previous.delivered,
+                                  true)} />
+              <Src>Создан за период и ещё не завершён.
+                Заказов = Доставлено + В работе.</Src>
+            </div>
+            <div className="stat-card stat-card--accent">
+              <span className="stat-card__label">Среднее время доставки</span>
+              <span className="stat-card__value">{fmtSeconds(periodSummary.current.avg_delivery_seconds)}</span>
+              <Delta d={calcDelta(periodSummary.current.avg_delivery_seconds,
+                                  periodSummary.previous.avg_delivery_seconds, true)} />
+              <Src>«Забрал» → «Доставлен» курьера; посчитано по{" "}
+                {periodSummary.current.avg_delivery_orders ?? 0} из{" "}
+                {periodSummary.current.delivered} доставленных. Не входят заказы
+                без обеих отметок и «доставки за 0 сек» (обе отметки проставлены
+                закрытием заказа в iiko).</Src>
+            </div>
+          </div>
+        )}
+
+        {/* ── Пикер периода ── */}
+        <div className="analytics__presets">
+          <button className={"seg-btn" + (preset === 1 ? " seg-btn--on" : "")}
+                  aria-pressed={preset === 1} onClick={() => applyPreset(1)}>Сегодня</button>
+          <button className={"seg-btn" + (preset === 7 ? " seg-btn--on" : "")}
+                  aria-pressed={preset === 7} onClick={() => applyPreset(7)}>7 дней</button>
+          <button className={"seg-btn" + (preset === 30 ? " seg-btn--on" : "")}
+                  aria-pressed={preset === 30} onClick={() => applyPreset(30)}>30 дней</button>
+          <span className="analytics__presets-sep" />
+          <input type="date" className="analytics__date" value={range.from} onChange={setCustomDate("from")} />
+          <span className="analytics__dash">—</span>
+          <input type="date" className="analytics__date" value={range.to} onChange={setCustomDate("to")} />
+        </div>
+
+        {statsLoading && <p className="admin__state">Загрузка…</p>}
+        {statsError && <p className="admin__state admin__state--err">Ошибка: {statsError}</p>}
+
+        {/* ── Нагрузка по зонам/районам (heatmap) ── */}
+        <HoursHeatTable
+          title="Кухня · нагрузка по часам"
+          data={zoneLoadData}
+          rowLabel={(z) => KZONE_LABEL[z] || z}
+          rowColor={(z) => zoneColor(z)}
+          rowIcon={(z) => zoneIcon(z)}
+          note={'Позиции заказов периода: час — по нажатию «Готово» на станции, ' +
+                'ср. мин = «Принял» → «Готово». Позиции без «Готово» не входят.'} />
+        <div className="heatx-actions">
+          <Link to="/demand" className="heatx-link">Карта спроса →</Link>
+        </div>
+
+        {/* ── Путь заказа (полоса этапов) ── */}
+        <section className="admin__table-wrap journey-card">
+          <h2 className="admin__section-title">Путь заказа · в среднем</h2>
+          {!journey.hasAny && !statsLoading ? (
+            <p className="admin__state">Нет данных за период</p>
+          ) : (
+            <>
+              <div className="journey__bar">
+                {journey.segs.map((s) => {
+                  const { r, g, b } = hexToRgb(s.color);
+                  return (
+                    <div key={s.key}
+                         className={"journey__seg" + (s.has ? "" : " journey__seg--empty")}
+                         style={s.has
+                           ? { flexGrow: s.avg, background: s.color }
+                           : { flexGrow: 0, "--seg": `${r},${g},${b}` }}
+                         title={s.has ? `${s.label}: ${sec2min(s.avg)} мин (p95 ${sec2min(s.p95)})`
+                                      : `${s.label}: нет данных за период`}>
+                      {!s.has && (
+                        <span className="journey__seg-dash">{s.label}<b>—</b></span>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="journey__total">
+                  <span className="journey__total-n">{sec2min(journey.total)}</span>
+                  <span className="journey__total-u">мин до клиента</span>
+                </div>
+              </div>
+              <div className="journey__legend">
+                {journey.segs.map((s) => (
+                  <span key={s.key}
+                        className={"journey__leg" + (s.key === journey.neckKey ? " journey__leg--neck" : "")
+                          + (s.has ? "" : " journey__leg--empty")}>
+                    <span className="journey__dot" style={{ background: s.has ? s.color : "#cbd5e1" }} />
+                    {s.label}<b>{s.has ? `${sec2min(s.avg)}м` : "—"}</b>
+                  </span>
+                ))}
+              </div>
+              {journey.neckLabel && (
+                <p className="journey__neck">
+                  Чаще всего тормозит: <b>{journey.neckLabel}</b> · {journey.neckCount} зак.
+                </p>
+              )}
+            </>
+          )}
+          <Src>Средние по заказам периода. Готовка — от первого «Принял» до
+            последнего «Готово» на кухне; Доставка — от «Забрал» курьера до
+            «Доставлен». Считается по отметкам на планшетах, пропуски добираются
+            временами из iiko. Заказ идёт в счёт только когда этап у него
+            пройден целиком, поэтому в двух полосах может быть разное число
+            заказов.</Src>
+        </section>
+
+        {/* ── SLA-просрочки ── */}
+        <section className="admin__table-wrap" style={{ padding: 24, marginBottom: 24 }}>
+          <h2 className="admin__section-title">SLA-просрочки</h2>
+          {stats ? (
+            <>
+              <p style={{
+                fontSize: 28, fontWeight: 700, margin: "0 0 16px",
+                color: (stats.sla?.rate || 0) > 0.2 ? "#dc2626" : "#16a34a",
+              }}>
+                {slaRate}% просрочено
+                <span style={{ fontSize: 15, fontWeight: 400, color: "#6b7280", marginLeft: 10 }}>
+                  ({stats.sla?.breached || 0}/{stats.sla?.total || 0})
+                </span>
+              </p>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={stats.sla?.by_day || []} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="breached" name="просрочки"
+                    stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </>
+          ) : (
+            !statsLoading && <p className="admin__state">Нет данных за период</p>
+          )}
+          <Src>Просрочка = от создания заказа до «Доставлен» прошло больше 45 мин.
+            Недоставленный заказ, висящий дольше 45 мин, тоже считается просрочкой.</Src>
+        </section>
+
+
+        {/* ── Смены: нагрузка против людей ── */}
+        <section className="admin__table-wrap" style={{ padding: 24, marginBottom: 24 }}>
+          <h2 className="admin__section-title">
+            Смены и всплески
+            <small style={{ fontWeight: 400, color: "#6b7280", marginLeft: 8 }}>
+              4 недели, по дням недели
+            </small>
+          </h2>
+          {staffingLoading && <p className="admin__state">Считаем по iiko…</p>}
+          {staffingErr && <p className="admin__state">Не удалось: {staffingErr}</p>}
+          {staffing && !staffingLoading && (
+            <>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+                {Object.entries(staffing.zones).map(([key, z]) => (
+                  <button key={key} type="button"
+                          className={"seg-btn" + (staffZone === key ? " seg-btn--on" : "")}
+                          onClick={() => setStaffZone(key)}>
+                    {z.label} · норма {z.norm_per_person ?? "—"}/чел·час
+                  </button>
+                ))}
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>День</th>
+                      {STAFF_HOURS.map((h) => (
+                        <th key={h} className="num">{String(h).padStart(2, "0")}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {WEEKDAY_SHORT.map((label, wd) => (
+                      <tr key={wd}>
+                        <td style={{ fontWeight: 600 }}>{label}</td>
+                        {STAFF_HOURS.map((h) => {
+                          const cell = staffing.cells.find(
+                            (c) => c.weekday === wd && c.hour === h && c.zone === staffZone);
+                          if (!cell || !cell.demand) return <td key={h} className="num">·</td>;
+                          const short = cell.recommended_people - cell.people;
+                          return (
+                            <td key={h} className="num"
+                                title={`${cell.demand} позиций · на смене ${cell.people}`
+                                       + ` · нужно ${cell.recommended_people}`}
+                                style={{
+                                  background: cell.is_peak && short > 0 ? "#fee2e2"
+                                    : cell.is_peak ? "#fef3c7" : "transparent",
+                                  fontWeight: cell.is_peak ? 700 : 400,
+                                }}>
+                              {cell.demand}
+                              {short > 0 && (
+                                <span style={{ color: "#dc2626" }}> +{short}</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          <Src>В клетке — сколько позиций этой зоны кухня делает в такой час
+            (медиана по четырём таким дням недели), красным «+N» — скольких людей
+            не хватало. Жёлтым отмечены всплески, красным — всплески, где не
+            хватало рук. Спрос берём из отчёта iiko, людей — из явок, а не из
+            входов на планшет: планшета на кухне два, а людей в зоне больше.
+            Пицца и горячее — одна зона, у них общий планшет.</Src>
+        </section>
+
+        {/* ── Опоздания доставок (OLAP iiko) ── */}
+        <section className="admin__table-wrap" style={{ padding: 24, marginBottom: 24 }}>
+          <h2 className="admin__section-title">
+            Опоздания доставок
+            {late?.period && (
+              <small style={{ fontWeight: 400, color: "#6b7280", marginLeft: 8 }}>
+                {late.period.from === late.period.to
+                  ? `за ${fmtDay(late.period.from)}`
+                  : `${fmtDay(late.period.from)} — ${fmtDay(late.period.to)}`}
+              </small>
+            )}
+          </h2>
+          {lateLoading && <p className="admin__state">Загрузка из iiko…</p>}
+          {lateError && <p className="admin__state">Отчёт iiko недоступен: {lateError}</p>}
+          {late && !lateLoading && (
+            <>
+              <p style={{
+                fontSize: 28, fontWeight: 700, margin: "0 0 4px",
+                color: late.late_rate > 0.2 ? "#dc2626" : "#16a34a",
+              }}>
+                {Math.round(late.late_rate * 100)}% опоздали
+                <span style={{ fontSize: 15, fontWeight: 400, color: "#6b7280", marginLeft: 10 }}>
+                  ({late.late_count}/{late.total})
+                </span>
+              </p>
+              <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 16px" }}>
+                {late.late_count > 0
+                  ? <>среднее опоздание {Math.round(late.avg_delay_minutes)} мин · худшее {late.max_delay_minutes} мин</>
+                  : <>за период опозданий нет</>}
+              </p>
+
+              {late.reasons && late.late_count > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+                  {Object.entries(late.reasons)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([key, n]) => (
+                      <span key={key} className="tg-chip"
+                            style={{ background: REASON_BG[key] || "#e5e7eb",
+                                     fontSize: 14, fontWeight: 600 }}>
+                        {REASON_LABEL[key] || key}: {n}
+                      </span>
+                    ))}
+                </div>
+              )}
+
+              {late.late_count > 0 && (
+                <>
+                  <button type="button" className="seg-btn"
+                          onClick={() => setLateOpen((v) => !v)}
+                          style={{ marginBottom: 12 }}>
+                    {lateOpen ? "▲ свернуть список" : `▼ показать все ${late.late_count}`}
+                  </button>
+                  {lateOpen && (
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Дата</th>
+                          <th className="num">№</th>
+                          <th>Курьер</th>
+                          <th>Обещали</th>
+                          <th>Привезли</th>
+                          <th className="num">Опоздание</th>
+                          <th>Из-за чего</th>
+                          <th>Адрес</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {late.orders.map((o, i) => (
+                          <tr key={`${o.number}-${o.actual_at}-${i}`}>
+                            <td style={{ whiteSpace: "nowrap" }}>
+                              {fmtOlapDate(o.actual_at || o.expected_at)}
+                            </td>
+                            <td className="num">{o.number}</td>
+                            <td>{o.courier || "—"}</td>
+                            <td>{fmtOlapTime(o.expected_at)}</td>
+                            <td>{fmtOlapTime(o.actual_at)}</td>
+                            <td className="num" style={{
+                              fontWeight: 700,
+                              color: o.delay_minutes >= 30 ? "#dc2626" : "#f59e0b",
+                            }}>
+                              +{o.delay_minutes} мин
+                            </td>
+                            <td>
+                              {o.reason ? (
+                                <>
+                                  {o.reason.label}
+                                  <small style={{ color: "#6b7280" }}>
+                                    {" "}+{Math.round(o.reason.over_seconds / 60)} мин к норме
+                                  </small>
+                                </>
+                              ) : "—"}
+                            </td>
+                            <td>{o.address || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+            </>
+          )}
+          <Src>Источник — OLAP-отчёт iiko «доставки», колонка «Опоздание доставки»:
+            те же цифры, что в «Отчёте заказы-доставка» в iikoOffice. Филиал —
+            {late?.department ? ` ${late.department}` : " текущий"}. Самовывоз не
+            считаем: у него в iiko тоже есть опоздание, но курьер к нему отношения
+            не имеет. Доставка без опоздания приходит из iiko с пустой колонкой —
+            это «вовремя», а не «нет данных». Заказы с сайта и из приложения
+            приходят в отчёт с адресом «ул. ---------- д. 0» (настоящий адрес iiko
+            хранит отдельным полем, в отчёт он не попадает) — такие адреса
+            подставляем из нашей базы, той же строкой, что видит курьер.
+            Причину берём из своих отметок: сравниваем готовку, ожидание курьера
+            и дорогу с их обычной длительностью за период и называем участок,
+            который сильнее вышел за норму. Не самый длинный: дорога почти всегда
+            дольше готовки, но это не делает курьера виноватым. «Нет наших
+            отметок» — заказ старее, чем мы собираем историю.</Src>
+        </section>
+
+        {/* ── Кухня по зонам ── */}
+        <section className="admin__table-wrap zbars-card">
+          <h2 className="admin__section-title">Кухня по зонам · среднее время готовки</h2>
+          {zonesLoading && <p className="admin__state">Загрузка…</p>}
+          {!zonesLoading && (zones?.zones || []).length === 0 && (
+            <p className="admin__state">Нет данных за период</p>
+          )}
+          {(() => {
+            const zs = zones?.zones || [];
+            const maxAvg = Math.max(1, ...zs.map((z) => z.avg || 0));
+            return zs.map((z) => {
+              const open = expandedZone === z.zone;
+              const col = zoneColor(z.zone);
+              const hasEmp = z.employees?.length > 0;
+              return (
+                <div key={z.zone} className="zbar">
+                  <button type="button" className="zbar__row"
+                          onClick={() => hasEmp && setExpandedZone(open ? null : z.zone)}>
+                    <span className="zbar__name">
+                      <span className="zbar__ic">{zoneIcon(z.zone)}</span>
+                      {KZONE_LABEL[z.zone] || zoneLabel(z.zone)}
+                    </span>
+                    <span className="zbar__track">
+                      <span className="zbar__fill" style={{ width: `${(z.avg / maxAvg) * 100}%`, background: col }} />
+                    </span>
+                    <span className="zbar__val">{sec2min(z.avg)}<small>мин</small></span>
+                    <span className="zbar__cnt">{z.count} поз.</span>
+                    <span className="zbar__chev">{hasEmp ? (open ? "▲" : "▼") : ""}</span>
+                  </button>
+                  {open && z.employees?.map((emp) => (
+                    <div key={emp.name} className="zbar__emp">
+                      <span>{emp.name}</span>
+                      <span>{sec2min(emp.avg)} мин · {emp.count} поз.</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            });
+          })()}
+          <Src>Позиции заказов периода с обеими отметками станции: время готовки =
+            «Принял» → «Готово». Клик по зоне — разбивка по сотрудникам
+            (кто нажимал на станции).</Src>
+        </section>
+
+        {/* ── Аномалии ── */}
+        <section className="admin__table-wrap" style={{ padding: 24, marginBottom: 24 }}>
+          <h2 className="admin__section-title">Аномалии (сегодня)</h2>
+          {anomaliesLoading && <p className="admin__state">Загрузка…</p>}
+          {anomalies && (
+            <div className="anom-grid">
+              <div className={"anom" + (anomalies.fast?.length ? " anom--bad" : " anom--ok")}>
+                <div className="anom__head">
+                  <span className="anom__title">Слишком быстро <small>&lt; 1 мин</small></span>
+                  <span className="anom__badge">{anomalies.fast?.length || 0}</span>
+                </div>
+                {anomalies.fast?.length === 0 ? (
+                  <p className="anom__ok">Всё чисто</p>
+                ) : (
+                  <ul className="anom__list">
+                    {anomalies.fast.map((a, i) => (
+                      <li key={i}>
+                        <span>#{a.order_number} · {a.item_name}</span>
+                        <span className="anom__num">{a.prep_seconds}с · {a.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className={"anom" + (anomalies.reverts?.length ? " anom--bad" : " anom--ok")}>
+                <div className="anom__head">
+                  <span className="anom__title">Частые возвраты <small>≥ 2</small></span>
+                  <span className="anom__badge">{anomalies.reverts?.length || 0}</span>
+                </div>
+                {anomalies.reverts?.length === 0 ? (
+                  <p className="anom__ok">Всё чисто</p>
+                ) : (
+                  <ul className="anom__list">
+                    {anomalies.reverts.map((r, i) => (
+                      <li key={i}>
+                        <span>#{r.order_number}</span>
+                        <span className="anom__num">{r.count} возвр.</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+          <Src>За сегодня (локальный день филиала): «слишком быстро» = «Готово»
+            раньше чем через минуту после «Принял»; возвраты = события возврата
+            позиции на станцию (≥ 2 на заказ).</Src>
+        </section>
+
+        {/* ── Сотрудники (за выбранный период) ── */}
+        <section className="admin__table-wrap" style={{ padding: 24, marginBottom: 24 }}>
+          <h2 className="admin__section-title">
+            Сотрудники <small className="admin__hint">за период</small>
+          </h2>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th className="num">Готово позиций</th>
+                <th className="num">Ср. время готовки</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(summary?.employees || []).length === 0 && (
+                <tr><td colSpan={3} className="admin-table__empty">Нет данных</td></tr>
+              )}
+              {(summary?.employees || []).map((e) => (
+                <tr key={e.name}>
+                  <td>{e.name}</td>
+                  <td className="num">{e.items_done}</td>
+                  <td className="num">{fmtSeconds(e.avg_prep_seconds)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Src>Позиции заказов периода, сгруппированные по исполнителю (кто нажимал
+            «Принял»/«Готово» на станции). Ср. время готовки = «Принял» → «Готово».</Src>
+        </section>
+
+        {/* ── Журнал событий ── */}
+        <section className="admin__table-wrap" style={{ padding: 24, marginBottom: 24 }}>
+          <h2 className="admin__section-title">Журнал событий</h2>
+          <Src>Все нажатия по заказам периода («Принял», «Готово», «Собрал»,
+            «Забрал», «Доставлен»…). Если по заказу нажатий не было, строки
+            восстановлены из его таймстемпов. Клик по строке — таймлайн заказа.</Src>
+
+          {/* Фильтры */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+            <select
+              value={jType}
+              onChange={(e) => setJType(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14 }}
+            >
+              <option value="">Все типы</option>
+              {JOURNAL_TYPES.map((t) => (
+                <option key={t} value={t}>{EVENT_TYPE_LABELS[t] || t}</option>
+              ))}
+            </select>
+            <input
+              type="text"
+              placeholder="Сотрудник"
+              value={jActor}
+              onChange={(e) => setJActor(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14 }}
+            />
+            <input
+              type="text"
+              placeholder="Номер заказа"
+              value={jNumber}
+              onChange={(e) => setJNumber(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14 }}
+            />
+          </div>
+
+          {journalLoading && <p className="admin__state">Загрузка…</p>}
+          {journal && (
+            <>
+              <p style={{ fontSize: 13, color: "#9ca3af", marginBottom: 8 }}>
+                Всего: {journal.total}
+              </p>
+              {journal.rows?.length === 0 ? (
+                <p className="admin__state">Нет событий</p>
+              ) : (
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Время</th>
+                      <th>Заказ</th>
+                      <th>Тип</th>
+                      <th>Сотрудник</th>
+                      <th>Позиция</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journal.rows?.map((row, i) => (
+                      <tr
+                        key={i}
+                        style={{ cursor: row.order_id ? "pointer" : "default" }}
+                        onClick={() => row.order_id && setTimelineOrderId(row.order_id)}
+                        title={row.order_id ? "Открыть тайм-лайн заказа" : ""}
+                      >
+                        <td style={{ fontSize: 12, color: "#6b7280", whiteSpace: "nowrap" }}>
+                          {row.at ? new Date(row.at).toLocaleString("ru-RU") : ""}
+                        </td>
+                        <td>
+                          {row.order_id ? (
+                            <span style={{ color: "#2563eb", fontWeight: 600 }}>#{row.order_number}</span>
+                          ) : (
+                            `#${row.order_number}`
+                          )}
+                        </td>
+                        <td>{EVENT_TYPE_LABELS[row.type] || row.type}</td>
+                        <td>{row.actor_name}</td>
+                        <td style={{ color: "#6b7280" }}>{row.item_name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+        </section>
+      </div>
+
+      {/* ── Drill-down модалка ── */}
+      {timelineOrderId && (
+        <TimelineModal
+          orgId={orgId}
+          orderId={timelineOrderId}
+          onClose={() => setTimelineOrderId(null)}
+        />
+      )}
+    </div>
+  );
+}

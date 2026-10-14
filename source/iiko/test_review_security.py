@@ -53,3 +53,11 @@ def test_production_requires_webhook_secret(monkeypatch):
     monkeypatch.setenv("ENCRYPTION_KEY","test-key")
     monkeypatch.setattr(api,"TELEGRAM_WEBHOOK_SECRET",None)
     with pytest.raises(RuntimeError,match="TELEGRAM_WEBHOOK_SECRET"): api._check_required_secrets()
+
+
+def test_widget_signing_never_falls_back_to_public_secret(monkeypatch):
+    import mountain_routes
+    monkeypatch.delenv("WIDGET_SECRET", raising=False)
+    monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="WIDGET_SECRET"):
+        mountain_routes._secret()

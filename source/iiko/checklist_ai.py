@@ -102,22 +102,25 @@ def photo_hash(data: bytes) -> str:
 
 
 def shrink(data: bytes, max_side: int = MAX_SIDE) -> Tuple[bytes, str]:
-    """Кадр → JPEG не длиннее max_side. Без Pillow отдаём как есть."""
+    """Decode only supported still images; malformed input must never reach AI."""
+    import warnings
+    from PIL import Image
     try:
-        from PIL import Image
-    except Exception:
-        return data, "image/jpeg"
-    try:
-        im = Image.open(io.BytesIO(data))
-        im = im.convert("RGB")
-        k = min(1.0, max_side / max(im.size))
-        if k < 1.0:
-            im = im.resize((int(im.width * k), int(im.height * k)), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, format="JPEG", quality=72, optimize=True)
-        return buf.getvalue(), "image/jpeg"
-    except Exception:
-        return data, "image/jpeg"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"]) as source:
+                if source.width * source.height > 20_000_000:
+                    raise ValueError("Image exceeds 20 megapixels")
+                source.load()
+                im = source.convert("RGB")
+                k = min(1.0, max_side / max(im.size))
+                if k < 1.0:
+                    im = im.resize((max(1, int(im.width*k)), max(1, int(im.height*k))), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=72, optimize=True)
+                return buf.getvalue(), "image/jpeg"
+    except (OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ValueError("Unsupported or invalid image") from exc
 
 
 def tokens_for(width: int, height: int) -> int:

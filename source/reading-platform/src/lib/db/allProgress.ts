@@ -1,12 +1,16 @@
 import { createServerSupabase } from "@/lib/supabase/client";
 import { listBooks } from "@/lib/db/books";
 import { listStudents } from "@/lib/db/students";
-import { partFromRow, questionFromRow } from "@/lib/db/mappers";
+import { partFromRow } from "@/lib/db/mappers";
 import { computePartStatus } from "@/lib/progress/partStatus";
 import { computeBookProgress, type BookProgress } from "@/lib/progress/bookProgress";
 import { unlockedThroughLevel, isLevelUnlocked } from "@/lib/progress/levelUnlock";
-import type { Answer, Book, Part, PartStatus, Question, Student } from "@/lib/types";
-import type { AnswerRow, PartRow, QuestionRow } from "@/lib/db/rowTypes";
+import type { Answer, Book, Part, PartStatus, QuestionScoring, Student } from "@/lib/types";
+import type { AnswerRow } from "@/lib/db/rowTypes";
+
+import { fetchScoringCatalog } from "@/lib/db/scoringCatalog";
+import { fetchAllRows } from "@/lib/db/paginate";
+import { partDataFrom } from "@/lib/db/studentProgress";
 
 export interface OverviewRow {
   student: Student;
@@ -25,7 +29,7 @@ function answerFromRow(r: AnswerRow): Answer {
   };
 }
 
-function partScore(questions: Question[], answers: Answer[]): number {
+function partScore(questions: QuestionScoring[], answers: Answer[]): number {
   return answers.reduce((sum, a) => {
     const q = questions.find((qq) => qq.id === a.questionId);
     if (!q) return sum;
@@ -34,10 +38,7 @@ function partScore(questions: Question[], answers: Answer[]): number {
   }, 0);
 }
 
-// Обзор учителя: раньше на каждую пару «ученик × книга» шло по три запроса
-// (при 21 ученике — десятки, а с полным списком книг было бы под 250).
-// Здесь пять запросов на всю страницу, остальное считается в памяти:
-// частей и попыток в базе десятки, объём данных ничтожный.
+// Все растущие выборки обходятся по страницам, ответы приходят с попытками.
 export async function overviewRows(): Promise<OverviewRow[]> {
   const db = createServerSupabase();
   const [students, books] = await Promise.all([listStudents(), listBooks()]);
@@ -47,42 +48,17 @@ export async function overviewRows(): Promise<OverviewRow[]> {
     }));
   }
 
-  const { data: partRows, error: partErr } = await db.from("parts")
-    .select("*").in("book_id", books.map((b) => b.id)).order("order");
-  if (partErr) throw partErr;
-  const parts = ((partRows ?? []) as PartRow[]).map(partFromRow);
-
-  const partIds = parts.map((p) => p.id);
-  const [
-    { data: qRows, error: qErr },
-    { data: attemptRows, error: aErr },
-  ] = await Promise.all([
-    db.from("questions").select("*").in("part_id", partIds),
-    db.from("attempts").select("id, student_id, part_id").in("part_id", partIds),
+  const [catalog, attempts] = await Promise.all([
+    fetchScoringCatalog(),
+    fetchAllRows<{ id: string; student_id: string; part_id: string; answers: AnswerRow[] }>(
+      (from, to) => db.rpc("get_progress_attempts", { p_from: from, p_to: to })),
   ]);
-  if (qErr) throw qErr;
-  if (aErr) throw aErr;
-
-  const attempts = (attemptRows ?? []) as { id: string; student_id: string; part_id: string }[];
-  const answersByAttempt = new Map<string, Answer[]>();
-  if (attempts.length > 0) {
-    const { data: ansRows, error: ansErr } = await db.from("answers")
-      .select("*").in("attempt_id", attempts.map((a) => a.id));
-    if (ansErr) throw ansErr;
-    for (const r of (ansRows ?? []) as AnswerRow[]) {
-      const arr = answersByAttempt.get(r.attempt_id);
-      if (arr) arr.push(answerFromRow(r));
-      else answersByAttempt.set(r.attempt_id, [answerFromRow(r)]);
-    }
-  }
-
-  const questionsByPart = new Map<string, Question[]>();
-  for (const r of (qRows ?? []) as QuestionRow[]) {
-    const q = questionFromRow(r);
-    const arr = questionsByPart.get(q.partId);
-    if (arr) arr.push(q);
-    else questionsByPart.set(q.partId, [q]);
-  }
+  const { parts: partRows, questions: questionRows } = catalog;
+  const parts = partRows.map((row) => partFromRow({ ...row, reading_text: "" }));
+  const questionsByPart = partDataFrom(questionRows, []).questionsByPart;
+  const answersByAttempt = new Map(attempts.map((a) => [
+    a.id, (a.answers ?? []).map(answerFromRow),
+  ]));
 
   const partsByBook = new Map<string, Part[]>();
   for (const p of parts) {

@@ -12,6 +12,14 @@ os.environ.setdefault("DB_PATH", os.path.join(tempfile.mkdtemp(prefix="chk-ai-")
 import checklist_ai as C  # noqa: E402
 
 
+def _valid_photo():
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (2,2), "white").save(buf, format="JPEG")
+    return buf.getvalue()
+
+
 def test_switch_turns_the_review_off_without_a_deploy():
     """Рубильник: разбор включён, но выключается одной переменной.
 
@@ -151,7 +159,7 @@ def test_review_answers_by_the_same_criteria_the_manager_sees():
     old = C._client
     C._client = client
     try:
-        out = aio.run(C.review_slot([(b"jpg", "зал")], cache={}, criteria=S.ZONE_CRITERIA))
+        out = aio.run(C.review_slot([(_valid_photo(), "зал")], cache={}, criteria=S.ZONE_CRITERIA))
     finally:
         C._client = old
 
@@ -173,7 +181,7 @@ def test_failed_criterion_beats_the_models_own_verdict():
     old = C._client
     C._client = client
     try:
-        out = aio.run(C.review_slot([(b"jpg", "санузел")], cache={}, criteria=S.ZONE_CRITERIA))
+        out = aio.run(C.review_slot([(_valid_photo(), "санузел")], cache={}, criteria=S.ZONE_CRITERIA))
     finally:
         C._client = old
     assert out["ok"] is False, "проваленный критерий обязан перевесить общий ok"

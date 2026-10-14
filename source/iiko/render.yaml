@@ -1,0 +1,25 @@
+# Candidate configuration only. Applying this blueprint requires a separate deployment.
+services:
+  - type: web
+    name: iiko
+    runtime: python
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT --workers 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.12
+      - key: ENVIRONMENT
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: DB_PATH
+        value: /data/iiko.db
+    disk:
+      name: iiko-data
+      mountPath: /data
+      sizeGB: 1

@@ -7,6 +7,7 @@ import tempfile
 
 os.environ.setdefault("DB_PATH", tempfile.mktemp(suffix=".db"))
 import api  # noqa: E402
+os.environ["TRUSTED_PROXY_CIDRS"] = "10.0.0.7/32"
 
 
 class Req:
@@ -56,3 +57,7 @@ if __name__ == "__main__":
             failed += 1; print(f"  [ERROR] {type(e).__name__}: {e}")
     print("\n" + "=" * 50)
     print("ВСЕ ТЕСТЫ ОК" if not failed else f"ПРОВАЛЕНО: {failed}")
+
+
+def test_untrusted_client_cannot_choose_its_rate_limit_bucket():
+    assert api._client_ip(Req(xff="1.2.3.4", host="203.0.113.99")) == "203.0.113.99"

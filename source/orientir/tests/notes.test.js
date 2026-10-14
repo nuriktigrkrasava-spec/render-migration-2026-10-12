@@ -70,6 +70,7 @@ test('итог дня разделяет сделанное и несделан�
   let data = пустые();
   const закрытая = Model.addTask(data, 'work', 'Договор', '2026-09-05');
   data = Model.toggleTask(закрытая.data, закрытая.id);
+  data.tasks.find(t => t.id === закрытая.id).doneAt = '2026-09-05'; // fixed historical fixture, independent of today's date
   data = Model.addTask(data, 'work', 'Счёт', '2026-09-05').data;
   data = Model.addTask(data, 'study', 'Курсовая', '2026-09-07', '2026-09-04').data;
   data = Model.addTask(data, 'work', 'Другой день', '2026-09-06').data;

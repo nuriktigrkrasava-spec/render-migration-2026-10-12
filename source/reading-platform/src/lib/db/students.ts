@@ -1,12 +1,14 @@
+import { fetchAllRows } from "@/lib/db/paginate";
+import type { StudentRow } from "@/lib/db/rowTypes";
 import { createServerSupabase } from "@/lib/supabase/client";
 import { studentFromRow } from "@/lib/db/mappers";
 import type { Student } from "@/lib/types";
 
 export async function listStudents(): Promise<Student[]> {
   const db = createServerSupabase();
-  const { data, error } = await db.from("students").select("*").order("created_at");
-  if (error) throw error;
-  return (data ?? []).map(studentFromRow);
+  const rows = await fetchAllRows<StudentRow>((from, to) => db.from("students")
+    .select("*").order("created_at").order("id").range(from, to));
+  return rows.map(studentFromRow);
 }
 
 export async function getStudent(studentId: string): Promise<Student | null> {

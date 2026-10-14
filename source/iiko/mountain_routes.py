@@ -25,7 +25,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -41,6 +41,7 @@ from database import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+from rate_limits import limiter
 
 # ── Гора: 40 отметок по 10 баллов, вершина — 400 ─────────────────────────────
 # Считано по потолку месяца: идеальные чек-листы дают 360 баллов, задачи ещё
@@ -1617,11 +1618,14 @@ class ChecklistPayload(BaseModel):
 
 
 @router.post("/api/mountain/checklist/{token}")
-async def checklist_upload(token: str, payload: ChecklistPayload):
+@limiter.limit("6/minute")
+async def checklist_upload(request: Request, token: str, payload: ChecklistPayload):
     sc = scope_of_token(token)
     uid = sc["uid"]
     if not sc["valid"]:
         return JSONResponse({"error": "bad token"}, status_code=404)
+    if sc.get("demo"):
+        return JSONResponse({"error": "Загрузка фото недоступна в демо"}, status_code=403)
     b = _branch_or_403(sc, payload.org)
     if not b:
         return JSONResponse({"error": "нет доступа к филиалу"}, status_code=403)
@@ -1642,11 +1646,15 @@ async def checklist_upload(token: str, payload: ChecklistPayload):
     saved: List[Dict[str, Any]] = []
     for i, raw in enumerate(payload.photos):
         try:
-            data = _b64.b64decode((raw or "").split(",", 1)[-1], validate=False)
+            data = _b64.b64decode((raw or "").split(",", 1)[-1], validate=True)
         except Exception:
             return JSONResponse({"error": "файл не читается"}, status_code=400)
         if len(data) > MAX_PHOTO_MB * 1024 * 1024:
             return JSONResponse({"error": f"кадр больше {MAX_PHOTO_MB} МБ — сожми"}, status_code=413)
+        try:
+            data, _ = _C.shrink(data)
+        except ValueError:
+            return JSONResponse({"error": "Нужно корректное фото JPEG, PNG или WebP"}, status_code=400)
         blobs.append((data, ZONES[payload.zone]))
         # В базе остаётся след кадра — хеш и вес, — но не сам кадр. Хеш ещё и
         # ключ кэша вердиктов: тот же снимок второй раз не оплачивается.

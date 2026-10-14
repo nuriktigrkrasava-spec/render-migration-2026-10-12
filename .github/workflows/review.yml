@@ -1,0 +1,55 @@
+name: Migration source review
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  iiko:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        source: [iiko, iiko-demo]
+    defaults:
+      run:
+        working-directory: source/${{ matrix.source }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest pytest-asyncio
+      - run: python scripts/test_isolated.py
+  reading:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: source/reading-platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm test && npm run test:db && npx tsc --noEmit && npm run build
+  saya:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci && npm run test -- --run && npm run build
+        working-directory: source/saya-kds/frontend
+      - run: pip install -r requirements-dev.lock && pip install --no-deps -e . && pytest -q
+        working-directory: source/saya-kds/backend
+  orientir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/*.test.js
+        working-directory: source/orientir

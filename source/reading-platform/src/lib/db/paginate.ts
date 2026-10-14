@@ -2,6 +2,7 @@
 // 1000). Вопросов в базе уже под тысячу, поэтому выборки, которые растут вместе
 // с контентом, идут страницами — иначе однажды они молча обрежутся и прогресс
 // начнёт считаться неверно.
+// PAGE must be <= PostgREST max_rows; supabase/config.toml sets max_rows=1000.
 const PAGE = 1000;
 
 export async function fetchAllRows<T>(

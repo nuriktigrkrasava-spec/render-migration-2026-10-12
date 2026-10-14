@@ -2,6 +2,13 @@ import { createServerSupabase } from "@/lib/supabase/client";
 import { partFromRow } from "@/lib/db/mappers";
 import type { Part } from "@/lib/types";
 
+export async function getPart(partId: string): Promise<Part | null> {
+  const db = createServerSupabase();
+  const { data, error } = await db.from("parts").select("*").eq("id", partId).maybeSingle();
+  if (error) throw error;
+  return data ? partFromRow(data) : null;
+}
+
 export async function listParts(bookId: string): Promise<Part[]> {
   const db = createServerSupabase();
   const { data, error } = await db.from("parts").select("*")

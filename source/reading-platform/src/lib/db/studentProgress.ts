@@ -27,8 +27,8 @@ function scoringFromRow(r: ScoringRow): QuestionScoring {
 
 // Всё, что нужно для подсчёта статусов/прогресса одного ученика по набору
 // частей. Раньше эти данные грузились по одной части (N+1: для книги из 30
-// частей — ~90 последовательных запросов). Здесь — три пакетных запроса
-// на любой набор частей: вопросы, попытки ученика, ответы.
+// частей — ~90 последовательных запросов). Здесь вопросы и попытки с вложенными ответами
+// читаются двумя независимыми выборками, при необходимости постранично.
 export interface PartData {
   questionsByPart: Map<string, QuestionScoring[]>;
   answersByPart: Map<string, Answer[]>;
@@ -55,8 +55,8 @@ export interface AttemptRef {
 }
 
 // Вопросы всей платформы в лёгком виде. Фильтр по частям не нужен: экранам
-// прогресса нужны вопросы всех книг сразу, а лишние строки ничего не стоят,
-// зато запрос перестаёт зависеть от списка частей и уходит в общий пакет.
+// прогресса нужны вопросы всех книг сразу. Выборка постраничная и независимая
+// от списка идентификаторов, поэтому длинный URL не растёт вместе с контентом.
 export function fetchScoringQuestions(): Promise<ScoringRow[]> {
   const db = createServerSupabase();
   return fetchAllRows<ScoringRow>((from, to) =>
@@ -67,8 +67,7 @@ export function fetchScoringQuestions(): Promise<ScoringRow[]> {
 export function fetchStudentAttempts(studentId: string): Promise<AttemptRef[]> {
   const db = createServerSupabase();
   return fetchAllRows<AttemptRef>((from, to) =>
-    db.from("attempts").select("id, part_id, answers(*)")
-      .eq("student_id", studentId).order("id").range(from, to),
+    db.rpc("get_progress_attempts", { p_student_id: studentId, p_from: from, p_to: to }),
   );
 }
 
@@ -98,28 +97,6 @@ export function partDataFrom(
   }
 
   return { questionsByPart, answersByPart };
-}
-
-export async function loadPartData(
-  studentId: string,
-  partIds: string[],
-): Promise<PartData> {
-  if (partIds.length === 0) {
-    return { questionsByPart: new Map(), answersByPart: new Map() };
-  }
-  const db = createServerSupabase();
-  const [questionRows, attempts] = await Promise.all([
-    fetchAllRows<ScoringRow>((from, to) =>
-      db.from("questions").select(SCORING_COLUMNS)
-        .in("part_id", partIds).order("id").range(from, to),
-    ),
-    fetchAllRows<AttemptRef>((from, to) =>
-      db.from("attempts").select("id, part_id, answers(*)")
-        .eq("student_id", studentId).in("part_id", partIds)
-        .order("id").range(from, to),
-    ),
-  ]);
-  return partDataFrom(questionRows, attempts);
 }
 
 export function statusFor(partId: string, data: PartData): PartStatus {

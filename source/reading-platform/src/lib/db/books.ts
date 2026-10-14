@@ -1,12 +1,14 @@
+import { fetchAllRows } from "@/lib/db/paginate";
+import type { BookRow } from "@/lib/db/rowTypes";
 import { createServerSupabase } from "@/lib/supabase/client";
 import { bookFromRow } from "@/lib/db/mappers";
 import type { Book } from "@/lib/types";
 
 export async function listBooks(): Promise<Book[]> {
   const db = createServerSupabase();
-  const { data, error } = await db.from("books").select("*").order("level");
-  if (error) throw error;
-  return (data ?? []).map(bookFromRow);
+  const rows = await fetchAllRows<BookRow>((from, to) => db.from("books")
+    .select("*").order("level").order("id").range(from, to));
+  return rows.map(bookFromRow);
 }
 
 export async function listBooksForLevel(level: number): Promise<Book[]> {

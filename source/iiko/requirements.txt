@@ -1,12 +1,12 @@
 anthropic==0.97.0
 # Pillow нужен разбору фото чек-листов: без него shrink() молча отдаёт кадр
 # как есть, и вместо 512 px в модель уходит 1024 px — вчетверо дороже.
-pillow==11.3.0
-cryptography==48.0.0
+pillow==12.3.0
+cryptography==50.0.2
 fastapi==0.136.1
 httpx==0.28.1
 pydantic==2.13.3
 slowapi==0.1.9
 uvicorn==0.46.0
-python-dotenv
+python-dotenv==1.2.4
 

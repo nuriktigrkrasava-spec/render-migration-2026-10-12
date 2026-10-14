@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 import httpx
 import os
@@ -70,38 +71,45 @@ from foodcost_calc import compute_recipe_foodcost
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 IS_PROD = os.getenv("ENVIRONMENT") == "production"
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _start_background(coro):
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+@asynccontextmanager
+async def lifespan(app):
+    await startup()
+    try:
+        yield
+    finally:
+        pending = list(_background_tasks)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        _background_tasks.clear()
+
 
 # Swagger отключён в production
 app = FastAPI(
     title="iikoBoss Analytics",
     version="1.0.0",
+    lifespan=lifespan,
+    openapi_url=None if IS_PROD else "/openapi.json",
     docs_url=None if IS_PROD else "/docs",
     redoc_url=None if IS_PROD else "/redoc",
 )
 
-# Rate limiter
-def _client_ip(request: Request) -> str:
-    """Адрес ПОСЕТИТЕЛЯ, а не прокси Render.
-
-    uvicorn на проде запущен без --proxy-headers, поэтому request.client.host —
-    это внутренний адрес прокси, один и тот же у всех. На нём лимитер считал
-    всех посетителей как одного: пять попыток кем угодно закрывали форму
-    регистрации для всего мира на пятнадцать минут.
-
-    Берём ПОСЛЕДНЮЮ запись X-Forwarded-For: её дописывает прокси по адресу
-    сокета. Подделать заголовок можно, но подделка окажется левее — и в ключ
-    не попадёт.
-    """
-    xff = request.headers.get("X-Forwarded-For") or ""
-    parts = [p.strip() for p in xff.split(",") if p.strip()]
-    if parts:
-        return parts[-1]
-    return get_remote_address(request)
-
-
-limiter = Limiter(key_func=_client_ip)
+from rate_limits import limiter, _client_ip
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -1027,8 +1035,7 @@ def _iiko_unavailable() -> Dict[str, Any]:
 def _check_required_secrets() -> None:
     """Fail-closed в проде: без BOT_TOKEN авторизация отключается (все становятся
     user id 0), без ENCRYPTION_KEY пароли iiko пишутся в БД открытым текстом.
-    Лучше не подняться, чем тихо работать дырявым. Webhook-секрет — громкое
-    предупреждение (его отсутствие открывает вебхук, но не валит прод)."""
+    Лучше не подняться, чем тихо работать без защиты вебхука."""
     if not IS_PROD:
         return
     missing = []
@@ -1036,14 +1043,12 @@ def _check_required_secrets() -> None:
         missing.append("TELEGRAM_BOT_TOKEN (без него авторизация выключена)")
     if not os.getenv("ENCRYPTION_KEY"):
         missing.append("ENCRYPTION_KEY (без него пароли iiko в БД открытым текстом)")
+    if not TELEGRAM_WEBHOOK_SECRET:
+        missing.append("TELEGRAM_WEBHOOK_SECRET (без него нельзя проверить отправителя)")
     if missing:
         raise RuntimeError("Отказ запуска (fail-closed): не заданы " + "; ".join(missing))
-    if not TELEGRAM_WEBHOOK_SECRET:
-        logger.warning("[security] TELEGRAM_WEBHOOK_SECRET не задан — вебхук бота "
-                       "принимает запросы без проверки. Задайте секрет в проде.")
 
 
-@app.on_event("startup")
 async def startup():
     _check_required_secrets()
     init_db()
@@ -1052,30 +1057,30 @@ async def startup():
     init_salary_db()
     init_salary_overrides_db()
     # Фоновый планировщик воскресного отчёта ген.директору
-    asyncio.create_task(_weekly_report_scheduler())
+    _start_background(_weekly_report_scheduler())
     # Понедельничные итоги недели — каждому владельцу по его филиалам
-    asyncio.create_task(_weekly_users_report_scheduler())
+    _start_background(_weekly_users_report_scheduler())
     # Ночная сводка кассовых смен (00:05)
-    asyncio.create_task(_daily_shifts_scheduler())
+    _start_background(_daily_shifts_scheduler())
     # Утренняя сводка: вчерашняя выручка, сравнения, прогноз месяца, стоп-лист
-    asyncio.create_task(_morning_report_scheduler())
+    _start_background(_morning_report_scheduler())
     # Триггеры в течение дня: касса молчит / выручка проваливается
-    asyncio.create_task(_trigger_scheduler())
+    _start_background(_trigger_scheduler())
     # Журналы: задание на слот тем, кто ещё не сдал
-    asyncio.create_task(_journal_scheduler())
+    _start_background(_journal_scheduler())
     # Ежедневная сводка владельцу — на ОБОИХ деплоях: демо шлёт юзеров,
     # основной — квоты накладных (см. _build_stats_text, БД у сервисов разные).
-    asyncio.create_task(_daily_stats_scheduler())
+    _start_background(_daily_stats_scheduler())
     # Ночная оценка филиалов + вторничная средняя
-    asyncio.create_task(_daily_scores_scheduler())
+    _start_background(_daily_scores_scheduler())
     # Опоздания сотрудников: управляющему сразу, владельцу — сводка в 21:00.
     # За рубильником: без реальных telegram id управляющих слать некому.
     if os.getenv("LATE_ALERTS") == "1":
-        asyncio.create_task(_late_alerts_scheduler())
+        _start_background(_late_alerts_scheduler())
     # «Завтра у вас смена» — сотрудникам, привязавшим личную ссылку
-    asyncio.create_task(_shift_reminders_scheduler())
+    _start_background(_shift_reminders_scheduler())
     if DEMO_ONLY:
-        asyncio.create_task(_demo_sales_scheduler())
+        _start_background(_demo_sales_scheduler())
 
 
 # ── Сайт ──
@@ -3336,60 +3341,6 @@ async def weekly_user_report_preview(
     if send:
         result["sent"] = await _tg_send(tg_id, text) is not None
     return result
-
-
-# ── ВРЕМЕННОЕ: миграция SQLite между хостингами ──
-# Включается ТОЛЬКО env-переменной MIGRATE_TOKEN (fail-closed: без неё 404).
-# dump — целостная копия БД (sqlite backup) на скачивание; restore — принять
-# файл БД и подменить DB_PATH (после restore сервис нужно перезапустить).
-# После переезда: удалить env MIGRATE_TOKEN, затем выпилить этот блок.
-MIGRATE_TOKEN = os.getenv("MIGRATE_TOKEN", "")
-
-
-def _migrate_auth(token: str):
-    if not MIGRATE_TOKEN or not hmac.compare_digest(token.encode(), MIGRATE_TOKEN.encode()):
-        raise HTTPException(status_code=404, detail="Not Found")
-
-
-@app.get("/api/admin/migrate/dump")
-async def migrate_dump(token: str = Query("")):
-    _migrate_auth(token)
-    import sqlite3 as _sq
-    from database import DB_PATH as _dbp
-    dst = _dbp + ".dump"
-    src = _sq.connect(_dbp)
-    out = _sq.connect(dst)
-    with out:
-        src.backup(out)
-    out.close(); src.close()
-    return FileResponse(dst, filename="db.sqlite",
-                        media_type="application/octet-stream")
-
-
-@app.post("/api/admin/migrate/restore")
-async def migrate_restore(request: Request, token: str = Query("")):
-    _migrate_auth(token)
-    import sqlite3 as _sq
-    from database import DB_PATH as _dbp
-    body = await request.body()
-    if not body.startswith(b"SQLite format 3\x00"):
-        raise HTTPException(status_code=400, detail="not a sqlite db")
-    tmp = _dbp + ".incoming"
-    with open(tmp, "wb") as f:
-        f.write(body)
-    con = _sq.connect(tmp)
-    n = con.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
-    con.close()
-    if not n:
-        raise HTTPException(status_code=400, detail="empty db")
-    # хвосты WAL от старого файла не должны примениться к новому
-    for suf in ("-wal", "-shm"):
-        try:
-            os.remove(_dbp + suf)
-        except FileNotFoundError:
-            pass
-    os.replace(tmp, _dbp)
-    return {"ok": True, "tables": n, "bytes": len(body)}
 
 
 @app.get("/api/withdrawals/{org_id}")
@@ -6945,9 +6896,11 @@ async def _handle_demo_registration(chat_id: int, telegram_id: int, username: st
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Обработчик сообщений и callback_query Telegram бота."""
-    if TELEGRAM_WEBHOOK_SECRET:
-        if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != TELEGRAM_WEBHOOK_SECRET:
-            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    if not TELEGRAM_WEBHOOK_SECRET or not hmac.compare_digest(
+        request.headers.get("X-Telegram-Bot-Api-Secret-Token", "").encode(),
+        (TELEGRAM_WEBHOOK_SECRET or "").encode()
+    ):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
     try:
         data = await request.json()
 
@@ -7600,8 +7553,7 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
 # ==== Отзывы с внешних площадок (2ГИС, Wolt) ====
@@ -11593,3 +11545,7 @@ async def site_files(path: str):
     if os.path.exists(index):
         return FileResponse(index, headers={"Cache-Control": "no-store, must-revalidate"})
     raise HTTPException(status_code=404, detail="Not Found")
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

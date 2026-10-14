@@ -51,6 +51,8 @@ from foodcost_calc import compute_recipe_foodcost
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 IS_PROD = os.getenv("ENVIRONMENT") == "production"
 
@@ -60,6 +62,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url=None if IS_PROD else "/docs",
     redoc_url=None if IS_PROD else "/redoc",
+    openapi_url=None if IS_PROD else "/openapi.json",
 )
 
 # Rate limiter
@@ -881,8 +884,7 @@ def _iiko_unavailable() -> Dict[str, Any]:
 def _check_required_secrets() -> None:
     """Fail-closed в проде: без BOT_TOKEN авторизация отключается (все становятся
     user id 0), без ENCRYPTION_KEY пароли iiko пишутся в БД открытым текстом.
-    Лучше не подняться, чем тихо работать дырявым. Webhook-секрет — громкое
-    предупреждение (его отсутствие открывает вебхук, но не валит прод)."""
+    Все три секрета обязательны в production."""
     if not IS_PROD:
         return
     missing = []
@@ -890,11 +892,10 @@ def _check_required_secrets() -> None:
         missing.append("TELEGRAM_BOT_TOKEN (без него авторизация выключена)")
     if not os.getenv("ENCRYPTION_KEY"):
         missing.append("ENCRYPTION_KEY (без него пароли iiko в БД открытым текстом)")
+    if not TELEGRAM_WEBHOOK_SECRET:
+        missing.append("TELEGRAM_WEBHOOK_SECRET")
     if missing:
         raise RuntimeError("Отказ запуска (fail-closed): не заданы " + "; ".join(missing))
-    if not TELEGRAM_WEBHOOK_SECRET:
-        logger.warning("[security] TELEGRAM_WEBHOOK_SECRET не задан — вебхук бота "
-                       "принимает запросы без проверки. Задайте секрет в проде.")
 
 
 @app.on_event("startup")
@@ -2285,60 +2286,6 @@ async def weekly_user_report_preview(
     if send:
         result["sent"] = await _tg_send(tg_id, text) is not None
     return result
-
-
-# ── ВРЕМЕННОЕ: миграция SQLite между хостингами ──
-# Включается ТОЛЬКО env-переменной MIGRATE_TOKEN (fail-closed: без неё 404).
-# dump — целостная копия БД (sqlite backup) на скачивание; restore — принять
-# файл БД и подменить DB_PATH (после restore сервис нужно перезапустить).
-# После переезда: удалить env MIGRATE_TOKEN, затем выпилить этот блок.
-MIGRATE_TOKEN = os.getenv("MIGRATE_TOKEN", "")
-
-
-def _migrate_auth(token: str):
-    if not MIGRATE_TOKEN or not hmac.compare_digest(token.encode(), MIGRATE_TOKEN.encode()):
-        raise HTTPException(status_code=404, detail="Not Found")
-
-
-@app.get("/api/admin/migrate/dump")
-async def migrate_dump(token: str = Query("")):
-    _migrate_auth(token)
-    import sqlite3 as _sq
-    from database import DB_PATH as _dbp
-    dst = _dbp + ".dump"
-    src = _sq.connect(_dbp)
-    out = _sq.connect(dst)
-    with out:
-        src.backup(out)
-    out.close(); src.close()
-    return FileResponse(dst, filename="db.sqlite",
-                        media_type="application/octet-stream")
-
-
-@app.post("/api/admin/migrate/restore")
-async def migrate_restore(request: Request, token: str = Query("")):
-    _migrate_auth(token)
-    import sqlite3 as _sq
-    from database import DB_PATH as _dbp
-    body = await request.body()
-    if not body.startswith(b"SQLite format 3\x00"):
-        raise HTTPException(status_code=400, detail="not a sqlite db")
-    tmp = _dbp + ".incoming"
-    with open(tmp, "wb") as f:
-        f.write(body)
-    con = _sq.connect(tmp)
-    n = con.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
-    con.close()
-    if not n:
-        raise HTTPException(status_code=400, detail="empty db")
-    # хвосты WAL от старого файла не должны примениться к новому
-    for suf in ("-wal", "-shm"):
-        try:
-            os.remove(_dbp + suf)
-        except FileNotFoundError:
-            pass
-    os.replace(tmp, _dbp)
-    return {"ok": True, "tables": n, "bytes": len(body)}
 
 
 @app.get("/api/withdrawals/{org_id}")
@@ -5212,9 +5159,9 @@ async def _handle_demo_registration(chat_id: int, telegram_id: int, username: st
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Обработчик сообщений и callback_query Telegram бота."""
-    if TELEGRAM_WEBHOOK_SECRET:
-        if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != TELEGRAM_WEBHOOK_SECRET:
-            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    if not TELEGRAM_WEBHOOK_SECRET or not hmac.compare_digest(
+        request.headers.get("X-Telegram-Bot-Api-Secret-Token", "").encode(), TELEGRAM_WEBHOOK_SECRET.encode()):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
     try:
         data = await request.json()
 
@@ -5587,8 +5534,7 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
 # ==== Отзывы с внешних площадок (2ГИС, Wolt) ====
@@ -6135,3 +6081,7 @@ async def cashshifts_pending(org_id: str, days: int = 30,
     resp = {"count": len(items), "items": items}
     _set_cached(cache_key, resp)
     return resp
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

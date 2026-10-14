@@ -39,6 +39,14 @@ def _clear_checklists():
     conn.commit(); conn.close()
 
 
+def _valid_photo():
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (2,2), "white").save(buf, format="JPEG")
+    return buf.getvalue()
+
+
 def test_token_is_signed():
     """Ссылку нельзя подделать, поменяв uid: подпись не сойдётся."""
     t = M.token_for(OWNER)
@@ -290,8 +298,8 @@ def test_weekly_average_ranks_and_shows_movement():
 def test_score_history_is_scoped_like_everything_else():
     """История оценок: владельцу вся сеть, управляющему только его филиал."""
     _seed()
-    db.save_branch_score(ORG_A, "2026-08-20", 71, 5)
-    db.save_branch_score(ORG_B, "2026-08-20", 44, 5)
+    db.save_branch_score(ORG_A, db.local_now().date().isoformat(), 71, 5)
+    db.save_branch_score(ORG_B, db.local_now().date().isoformat(), 44, 5)
     o = client.get(f"/api/mountain/scores/{M.token_for(OWNER)}").json()
     m = client.get(f"/api/mountain/scores/{M.token_for(MANAGER)}").json()
     assert len(o["branches"]) == 2 and len(m["branches"]) == 1, (o, m)
@@ -454,10 +462,7 @@ def test_photos_are_not_kept_on_disk():
     from database import checklist_dir, get_checklist_uploads
     _seed()
     # однопиксельный JPEG — достаточно, чтобы пройти путь целиком
-    px = base64.b64encode(bytes.fromhex(
-        "ffd8ffe000104a46494600010100000100010000ffdb004300ff"
-        "c00011080001000101011100ffc4001f0000010501010101010100000000000000000102030405060708090a0b"
-        "ffda0008010100003f00d2cf20ffd9")).decode()
+    px = base64.b64encode(_valid_photo()).decode()
     before = sum(len(f) for _r, _d, f in _os.walk(checklist_dir()))
     r = client.post(f"/api/mountain/checklist/{M.token_for_org(ORG_B)}",
                     json={"slot": "10:45", "zone": "hall", "photos": [px, px]})
@@ -505,10 +510,7 @@ def test_upload_says_honestly_why_there_was_no_review():
     """
     import base64
     _seed()
-    px = base64.b64encode(bytes.fromhex(
-        "ffd8ffe000104a46494600010100000100010000ffdb004300ff"
-        "c00011080001000101011100ffc4001f0000010501010101010100000000000000000102030405060708090a0b"
-        "ffda0008010100003f00d2cf20ffd9")).decode()
+    px = base64.b64encode(_valid_photo()).decode()
     r = client.post(f"/api/mountain/checklist/{M.token_for_org(ORG_B)}",
                     json={"slot": "15:00", "zone": "wc", "photos": [px]})
     assert r.status_code == 200, r.text[:200]

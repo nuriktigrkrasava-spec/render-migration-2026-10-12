@@ -7,23 +7,26 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:db": "node scripts/test_database.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",
-    "next": "16.2.9",
+    "next": "16.4.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "ws": "^8.21.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@electric-sql/pglite": "^0.5.9",
+    "@types/node": "24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.4.0",
     "typescript": "^5",
-    "vitest": "^2.1.9"
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
   }
 }

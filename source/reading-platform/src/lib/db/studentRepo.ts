@@ -1,18 +1,18 @@
 import { createServerSupabase } from "@/lib/supabase/client";
 import { studentFromRow, partFromRow } from "@/lib/db/mappers";
-import { fetchAllRows } from "@/lib/db/paginate";
+import { fetchScoringCatalog } from "@/lib/db/scoringCatalog";
+import { getPart } from "@/lib/db/parts";
 import { listQuestions } from "@/lib/db/questions";
 import { listBooks } from "@/lib/db/books";
 import { getStudent } from "@/lib/db/students";
 import { unlockedPartIds } from "@/lib/progress/unlock";
 import { unlockedThroughLevel, isLevelUnlocked } from "@/lib/progress/levelUnlock";
 import {
-  partDataFrom, fetchScoringQuestions, fetchStudentAttempts,
+  partDataFrom, fetchStudentAttempts,
   statusFor, bookProgressFrom, type PartData,
 } from "@/lib/db/studentProgress";
 import type { Student, Book, Part, PartStatus, Question, Answer } from "@/lib/types";
 import type { BookProgress } from "@/lib/progress/bookProgress";
-import type { PartRow } from "@/lib/db/rowTypes";
 
 export async function upsertStudentByTelegram(input: {
   telegramId: string; name: string;
@@ -51,19 +51,14 @@ export interface Ladder {
 export async function loadLadder(studentId: string): Promise<Ladder | null> {
   const db = createServerSupabase();
 
-  const [student, books, partRows, questionRows, attempts] = await Promise.all([
-    getStudent(studentId),
-    listBooks(),
-    fetchAllRows<PartRow>((from, to) =>
-      db.from("parts").select("*").order("book_id").order("order").range(from, to),
-    ),
-    fetchScoringQuestions(),
-    fetchStudentAttempts(studentId),
+  const [student, books, catalog, attempts] = await Promise.all([
+    getStudent(studentId), listBooks(), fetchScoringCatalog(), fetchStudentAttempts(studentId),
   ]);
+  const { parts: partRows, questions: questionRows } = catalog;
   if (!student) return null;
 
   const data = partDataFrom(questionRows, attempts);
-  const parts = partRows.map(partFromRow);
+  const parts = partRows.map((row) => partFromRow({ ...row, reading_text: "" }));
 
   const partsByBook = new Map<string, Part[]>();
   for (const p of parts) {
@@ -145,6 +140,7 @@ export interface PartDetail {
 // загрузка прогресса тянет по вопросам лишь тип и баллы.
 export async function partDetail(
   l: Ladder, bookId: string, partId: string,
+  loaded?: { questions: Question[]; part: Part | null },
 ): Promise<PartDetail | null> {
   const book = l.books.find((b) => b.id === bookId);
   if (!book) return null;
@@ -153,9 +149,13 @@ export async function partDetail(
   const target = all.find((p) => p.part.id === partId);
   if (!target) return null;
 
+  const [questions, fullPart] = loaded
+    ? [loaded.questions, loaded.part] as const
+    : await Promise.all([listQuestions(partId), getPart(partId)]);
+  if (!fullPart || fullPart.id !== partId || fullPart.bookId !== bookId) return null;
   return {
-    part: target.part,
-    questions: await listQuestions(partId),
+    part: fullPart,
+    questions,
     answers: l.data.answersByPart.get(partId) ?? [],
     status: target.status,
     unlocked: target.unlocked,

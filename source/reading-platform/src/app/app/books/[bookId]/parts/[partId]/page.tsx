@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getStudentId } from "@/lib/auth/student";
 import { loadLadder, partDetail } from "@/lib/db/studentRepo";
+import { getPart } from "@/lib/db/parts";
+import { listQuestions } from "@/lib/db/questions";
 import { optionLetter } from "@/lib/options";
 import type { Answer, Question } from "@/lib/types";
 import LoadingScreen from "@/components/student/LoadingScreen";
@@ -79,7 +81,9 @@ export default async function PartPage({
   const studentId = await getStudentId();
   if (!studentId) return <LoadingScreen />;
 
-  const ladder = await loadLadder(studentId);
+  const [ladder, questionsForPart, fullPart] = await Promise.all([
+    loadLadder(studentId), listQuestions(partId), getPart(partId),
+  ]);
   if (!ladder) return <LoadingScreen />;
 
   const backLink = (
@@ -89,7 +93,7 @@ export default async function PartPage({
     </Link>
   );
 
-  const detail = await partDetail(ladder, bookId, partId);
+  const detail = await partDetail(ladder, bookId, partId, { questions: questionsForPart, part: fullPart });
 
   // Прямая ссылка не должна обходить лестницу уровней.
   if (detail && !detail.bookUnlocked) {
